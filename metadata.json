@@ -1,0 +1,6 @@
+{
+  "name": "SAM HASH VERIFY — Forensic Integrity System",
+  "description": "Sistema de Geração e Validação de Integridade Digital para evidências e extrações forenses (Cellebrite UFED, PA, nuvem). Desenvolvido pelo APF Ramon (ramon.grsl) — Polícia Federal — XIV Cellebrite — Turma A — 2026.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
