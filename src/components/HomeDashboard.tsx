@@ -13,6 +13,7 @@ import {
   FolderTree,
   Award,
   HelpCircle,
+  Cloud,
 } from 'lucide-react';
 import { ForensicLogo } from './ForensicLogo';
 
@@ -223,6 +224,27 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
             </div>
             <span className="mt-4 text-xs text-[#F57917] font-medium flex items-center gap-1">
               Gerenciar manifesto <ArrowRight className="w-3 h-3" />
+            </span>
+          </div>
+
+          {/* Validação de Hash — Nuvens (Google & Apple) */}
+          <div
+            onClick={() => onNavigate('nuvens')}
+            className="p-5 rounded-xl bg-[#131519] border border-[#262930] hover:border-[#4285F4]/60 hover:bg-[#171A20] transition-all cursor-pointer flex flex-col justify-between"
+          >
+            <div>
+              <div className="flex items-center gap-3 mb-3">
+                <div className="p-2 rounded-lg bg-[#262930] text-[#4285F4]">
+                  <Cloud className="w-5 h-5" />
+                </div>
+                <h4 className="font-bold text-sm text-white">Nuvens (Google & Apple)</h4>
+              </div>
+              <p className="text-xs text-zinc-400 leading-relaxed">
+                Conferência de produções legais: PDF de hashes da Google (SHA-512) e manifesto CSV da Apple (.zip.gpg e decifrados).
+              </p>
+            </div>
+            <span className="mt-4 text-xs text-[#4285F4] font-medium flex items-center gap-1">
+              Validar produções <ArrowRight className="w-3 h-3" />
             </span>
           </div>
 

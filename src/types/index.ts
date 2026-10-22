@@ -112,6 +112,11 @@ export interface CryptoVectorTest {
 export type ManifestItemStatus =
   | 'CORRESPONDENTE'
   | 'DIVERGENTE'
+  | 'ARQUIVO_NAO_LOCALIZADO'
+  | 'ASSOCIACAO_AMBIGUA'
+  | 'ERRO_LEITURA'
+  | 'REGISTRO_INVALIDO'
+  | 'NAO_VERIFICADO'
   | 'AUSENTE'
   | 'ADICIONAL'
   | 'SEM_REFERENCIA';
@@ -129,6 +134,7 @@ export interface ExtractionManifestItem {
 
 export interface ManifestVerificationItem {
   id: string;
+  sequence?: number;
   fileName: string;
   relativePath: string;
   size?: number;
@@ -137,7 +143,11 @@ export interface ManifestVerificationItem {
   expectedHash?: string;
   calculatedHash?: string;
   status: ManifestItemStatus;
+  statusLabel?: string;
   notes?: string;
+  candidateFiles?: File[];
+  selectedFile?: File;
+  lineNumber?: number;
 }
 
 export type FolderItemStatus = 'CALCULADO' | 'ERRO' | 'CANCELADO' | 'PENDENTE';
@@ -281,4 +291,113 @@ export interface AuditLogEntry {
   details?: Record<string, unknown>;
 }
 
+// -----------------------------------------------------------------------------
+// CLOUD PROVIDER VALIDATION TYPES (GOOGLE & APPLE)
+// -----------------------------------------------------------------------------
 
+export type CloudProvider = 'GOOGLE' | 'APPLE';
+
+export type CloudValidationVerdict =
+  | 'INTEGRO'
+  | 'ALTERADO'
+  | 'AUSENTE'
+  | 'EXTRA'
+  | 'NAO_VERIFICAVEL';
+
+export type AppleValidationMode = 'GPG_ENCRYPTED' | 'ZIP_DECRYPTED';
+
+export interface GoogleCloudManifestItem {
+  id: string;
+  fileName: string;
+  account: string;
+  algorithm: 'SHA-512';
+  declaredHash: string;
+  sourcePdfName?: string;
+  sourcePage?: number;
+}
+
+export interface AppleCloudManifestItem {
+  id: string;
+  dataType: string;
+  fileName: string;
+  accountId: string;
+  fileLink?: string;
+  fileType?: string;
+  gpgSize?: string;
+  gpgSha256?: string;
+  gpgSha512?: string;
+  clearTextSha256?: string;
+  clearTextSha512?: string;
+  expiryDate?: string;
+  sourceCsvName?: string;
+}
+
+export interface CloudVerificationItem {
+  id: string;
+  sequence: number;
+  provider: CloudProvider;
+  account: string;
+  fileName: string;
+  relativePath?: string;
+  categoryOrProduct?: string;
+  algorithm: HashAlgorithm;
+  declaredHash?: string;
+  calculatedHash?: string;
+  verdict: CloudValidationVerdict;
+  verdictLabel: string;
+  severity: 'none' | 'warning' | 'grave';
+  deliveredFile?: File;
+  fileSize?: number;
+  formattedSize?: string;
+  timeTakenMs?: number;
+  sourceDoc?: string;
+  notes?: string;
+  gpgSize?: string;
+  expiryDate?: string;
+}
+
+export interface CloudAccountCompleteness {
+  account: string;
+  expected: number;
+  delivered: number;
+  integro: number;
+  alterado: number;
+  ausente: number;
+  extra: number;
+  naoVerificavel: number;
+  status: 'INTEGRA' | 'INCOMPLETA' | 'DIVERGENTE' | 'SEM_ENTREGA';
+  statusLabel: string;
+}
+
+export interface CloudValidationSession {
+  id: string;
+  provider: CloudProvider;
+  procedureNumber?: string;
+  internalReference?: string;
+  declaredDate?: string;
+  examinerName?: string;
+  notes?: string;
+  sourceDocs: Array<{
+    name: string;
+    size: number;
+    sha256: string;
+    itemsCount: number;
+  }>;
+  items: CloudVerificationItem[];
+  accounts: CloudAccountCompleteness[];
+  appleMode?: AppleValidationMode;
+  appleAlgorithm?: 'SHA-256' | 'SHA-512';
+  summary: {
+    totalExpected: number;
+    totalDelivered: number;
+    totalIntegro: number;
+    totalAlterado: number;
+    totalAusente: number;
+    totalExtra: number;
+    totalNaoVerificavel: number;
+    totalAccounts: number;
+    integrityRate: number;
+  };
+  verificationSealSha256: string;
+  generatedAt: string;
+}

@@ -1323,4 +1323,816 @@ export function generateTestDocumentPDF(customConfig?: ReturnType<typeof getAppC
   });
 }
 
+// -----------------------------------------------------------------------------
+// MANIFEST VALIDATION REPORT EXPORTER (EXACTFILE & UNIVERSAL MANIFESTS)
+// -----------------------------------------------------------------------------
+
+import type { ManifestVerificationItem } from '../types';
+
+export interface ManifestValidationReportData {
+  id: string;
+  manifestOrigin: string; // e.g. "ExactFile 1.0.0.15", "SAM HASH VERIFY", "GNU Coreutils"
+  manifestName: string;
+  declaredDate?: string;
+  validationTimestamp: string;
+  timezone: string;
+  algorithm: string;
+  totalItems: number;
+  correspondentes: number;
+  divergentes: number;
+  naoLocalizados: number;
+  ambiguos: number;
+  erros: number;
+  naoVerificados: number;
+  items: ManifestVerificationItem[];
+  examinerName?: string;
+  procedureNumber?: string;
+}
+
+export function exportManifestValidationPDF(data: ManifestValidationReportData): void {
+  const config = getAppConfiguration();
+  const header = config.documents.header;
+  const footer = config.documents.footer;
+  const formatting = config.documents.formatting;
+
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4',
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = formatting.marginsMm || 14;
+  const contentWidth = pageWidth - margin * 2;
+  let y = margin;
+
+  const hex = formatting.titleAccentColor || '#F57917';
+  const r = parseInt(hex.slice(1, 3), 16) || 245;
+  const g = parseInt(hex.slice(3, 5), 16) || 121;
+  const b = parseInt(hex.slice(5, 7), 16) || 23;
+
+  const drawHeader = (isFirstPage: boolean) => {
+    doc.setFillColor(15, 17, 21);
+    doc.rect(margin, y, contentWidth, isFirstPage ? 20 : 12, 'F');
+
+    doc.setFillColor(r, g, b);
+    doc.rect(margin, y, contentWidth, 1.4, 'F');
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(isFirstPage ? 11 : 9);
+    doc.text(header.title || 'SAM HASH VERIFY', margin + 5, y + (isFirstPage ? 8 : 7));
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.setTextColor(r, g, b);
+    doc.text(header.subtitle || 'FORENSIC INTEGRITY SYSTEM', margin + 46, y + (isFirstPage ? 8 : 7));
+
+    if (isFirstPage) {
+      doc.setTextColor(180, 185, 195);
+      doc.setFontSize(7.5);
+      doc.text('LAUDO TÉCNICO DE CONFERÊNCIA E VALIDAÇÃO DE MANIFESTO DE INTEGRIDADE', margin + 5, y + 14);
+
+      if (header.showInstitutionalFields && (header.institutionName || header.sectorName)) {
+        doc.setFontSize(7);
+        doc.setTextColor(210, 215, 225);
+        const inst = [header.institutionName, header.sectorName].filter(Boolean).join(' • ');
+        doc.text(inst, margin + contentWidth - 5, y + 14, { align: 'right' });
+      }
+    }
+
+    y += isFirstPage ? 25 : 16;
+  };
+
+  drawHeader(true);
+
+  // Metadata Box
+  doc.setTextColor(20, 24, 30);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9.5);
+  doc.text('DADOS DA VALIDAÇÃO E ORIGEM DO MANIFESTO', margin, y);
+  y += 2.5;
+  doc.setDrawColor(220, 225, 230);
+  doc.line(margin, y, margin + contentWidth, y);
+  y += 5;
+
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(70, 75, 85);
+  doc.text('Origem do Manifesto:', margin, y);
+  doc.setFont('courier', 'bold');
+  doc.setTextColor(r, g, b);
+  doc.text(data.manifestOrigin, margin + 42, y);
+
+  y += 4.5;
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(70, 75, 85);
+  doc.text('Arquivo do Manifesto:', margin, y);
+  doc.setFont('courier', 'normal');
+  doc.setTextColor(20, 24, 30);
+  doc.text(data.manifestName || 'Manifesto Carregado', margin + 42, y);
+
+  if (data.declaredDate) {
+    y += 4.5;
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(70, 75, 85);
+    doc.text('Data Declarada no Manifesto:', margin, y);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(20, 24, 30);
+    doc.text(`${data.declaredDate} (Conforme cabeçalho do arquivo original)`, margin + 42, y);
+  }
+
+  y += 4.5;
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(70, 75, 85);
+  doc.text('Data da Validação Local:', margin, y);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(20, 24, 30);
+  doc.text(`${data.validationTimestamp} (${data.timezone})`, margin + 42, y);
+
+  y += 4.5;
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(70, 75, 85);
+  doc.text('Protocolo da Operação:', margin, y);
+  doc.setFont('courier', 'normal');
+  doc.setTextColor(20, 24, 30);
+  doc.text(data.id, margin + 42, y);
+
+  y += 7;
+
+  // KPI Strip
+  doc.setFillColor(248, 249, 251);
+  doc.roundedRect(margin, y, contentWidth, 11, 2, 2, 'F');
+  doc.setFontSize(7.5);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(22, 101, 52);
+  doc.text(`CORRESPONDENTES: ${data.correspondentes}`, margin + 4, y + 7);
+  doc.setTextColor(185, 28, 28);
+  doc.text(`DIVERGENTES: ${data.divergentes}`, margin + 42, y + 7);
+  doc.setTextColor(180, 83, 9);
+  doc.text(`NÃO LOCALIZADOS: ${data.naoLocalizados}`, margin + 78, y + 7);
+  doc.setTextColor(109, 40, 217);
+  doc.text(`AMBÍGUOS: ${data.ambiguos}`, margin + 120, y + 7);
+  doc.setTextColor(70, 75, 85);
+  doc.text(`TOTAL: ${data.totalItems}`, margin + 155, y + 7);
+
+  y += 15;
+
+  // Table header
+  const drawTableHeader = () => {
+    doc.setFillColor(240, 242, 246);
+    doc.rect(margin, y, contentWidth, 6.5, 'F');
+    doc.setDrawColor(210, 215, 222);
+    doc.rect(margin, y, contentWidth, 6.5, 'S');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(40, 45, 55);
+    doc.text('Nº', margin + 2, y + 4.5);
+    doc.text('Caminho / Nome do Arquivo', margin + 10, y + 4.5);
+    doc.text('Hash de Referência (Manifesto)', margin + 78, y + 4.5);
+    doc.text('Hash Calculado Localmente', margin + 125, y + 4.5);
+    doc.text('Situação', margin + contentWidth - 16, y + 4.5);
+
+    y += 6.5;
+  };
+
+  drawTableHeader();
+
+  // Draw items
+  for (let idx = 0; idx < data.items.length; idx++) {
+    const item = data.items[idx];
+
+    if (y > pageHeight - 25) {
+      doc.addPage();
+      y = margin;
+      drawHeader(false);
+      drawTableHeader();
+    }
+
+    if (idx % 2 === 1) {
+      doc.setFillColor(250, 251, 253);
+      doc.rect(margin, y, contentWidth, 8, 'F');
+    }
+
+    doc.setDrawColor(235, 238, 242);
+    doc.line(margin, y + 8, margin + contentWidth, y + 8);
+
+    doc.setFontSize(6.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(80, 85, 95);
+    doc.text(String(idx + 1), margin + 2, y + 4.5);
+
+    // Path / Name
+    const displayPath = item.relativePath || item.fileName;
+    const shortPath = displayPath.length > 40 ? '...' + displayPath.slice(-37) : displayPath;
+    doc.setFont('courier', 'normal');
+    doc.setTextColor(20, 24, 30);
+    doc.text(shortPath, margin + 10, y + 4);
+    if (item.formattedSize) {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(5.5);
+      doc.setTextColor(110, 115, 125);
+      doc.text(item.formattedSize, margin + 10, y + 7);
+    }
+
+    // Expected Hash
+    doc.setFont('courier', 'normal');
+    doc.setFontSize(6);
+    doc.setTextColor(60, 65, 75);
+    const exp = item.expectedHash || '—';
+    const shortExp = exp.length > 28 ? exp.substring(0, 26) + '...' : exp;
+    doc.text(shortExp, margin + 78, y + 4.8);
+
+    // Calculated Hash
+    doc.setFont('courier', 'bold');
+    const calc = item.calculatedHash || '(Não calculado)';
+    const shortCalc = calc.length > 28 ? calc.substring(0, 26) + '...' : calc;
+    doc.setTextColor(item.status === 'CORRESPONDENTE' ? 20 : 160, 30, 40);
+    doc.text(shortCalc, margin + 125, y + 4.8);
+
+    // Status
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.5);
+    if (item.status === 'CORRESPONDENTE') {
+      doc.setTextColor(22, 101, 52);
+      doc.text('ÍNTEGRO', margin + contentWidth - 16, y + 4.8);
+    } else if (item.status === 'DIVERGENTE') {
+      doc.setTextColor(185, 28, 28);
+      doc.text('DIVERGENTE', margin + contentWidth - 16, y + 4.8);
+    } else if (item.status === 'ARQUIVO_NAO_LOCALIZADO' || item.status === 'AUSENTE') {
+      doc.setTextColor(180, 83, 9);
+      doc.text('AUSENTE', margin + contentWidth - 16, y + 4.8);
+    } else if (item.status === 'ASSOCIACAO_AMBIGUA') {
+      doc.setTextColor(109, 40, 217);
+      doc.text('AMBÍGUO', margin + contentWidth - 16, y + 4.8);
+    } else {
+      doc.setTextColor(100, 110, 120);
+      doc.text(String(item.status), margin + contentWidth - 16, y + 4.8);
+    }
+
+    y += 8;
+  }
+
+  // Conclusion
+  if (y > pageHeight - 40) {
+    doc.addPage();
+    y = margin;
+    drawHeader(false);
+  }
+
+  y += 5;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(20, 24, 30);
+  doc.text('CONCLUSÃO TÉCNICA PADRONIZADA DE VALIDAÇÃO DE MANIFESTO', margin, y);
+  y += 3.5;
+
+  let conclusion = '';
+  if (data.divergentes === 0 && data.naoLocalizados === 0 && data.ambiguos === 0 && data.erros === 0 && data.correspondentes > 0) {
+    conclusion = `Todos os ${data.correspondentes} arquivo(s) analisados apresentaram estrita correspondência matemática contra os hashes de referência informados no manifesto (${data.manifestOrigin}), confirmando a integridade do conjunto documental verificado.`;
+  } else {
+    conclusion = `A validação do manifesto (${data.manifestOrigin}) apontou irregularidades: foram constatados ${data.correspondentes} arquivo(s) íntegro(s), ${data.divergentes} divergente(s), ${data.naoLocalizados} ausente(s) e ${data.ambiguos} ambíguo(s). A integridade global do pacote NÃO PODE ser atestada integralmente.`;
+  }
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(60, 65, 75);
+  const splitConc = doc.splitTextToSize(conclusion, contentWidth);
+  doc.text(splitConc, margin, y);
+
+  // Footer on all pages
+  const totalPages = doc.getNumberOfPages();
+  for (let p = 1; p <= totalPages; p++) {
+    doc.setPage(p);
+    const footY = pageHeight - 10;
+    doc.setDrawColor(220, 225, 230);
+    doc.setLineWidth(0.3);
+    doc.line(margin, footY - 2, margin + contentWidth, footY - 2);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.5);
+    doc.setTextColor(80, 85, 95);
+    doc.text(footer.developerCredit || 'Desenvolvido pelo APF Ramon (ramon.grsl)', margin, footY + 2);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(120, 125, 135);
+    doc.text(footer.trainingContext || 'Polícia Federal — XIV Cellebrite — Turma A — 2026', margin, footY + 5.5);
+
+    doc.text(`Página ${p} de ${totalPages}`, margin + contentWidth - 18, footY + 2);
+  }
+
+  doc.save(`Validacao_Manifesto_${data.id}.pdf`);
+
+  auditLogger.addLog({
+    operation: 'MANIFESTO_VALIDADO',
+    status: data.divergentes > 0 ? 'DIVERGENTE' : 'SUCESSO',
+    message: `Laudo de validação de manifesto emitido (${data.manifestOrigin}): ${data.correspondentes} íntegros, ${data.divergentes} divergentes.`,
+    filesCount: data.totalItems,
+  });
+}
+
+export function exportManifestValidationCSV(data: ManifestValidationReportData): string {
+  const header = [
+    'Sequencial',
+    'Arquivo',
+    'Caminho_Relativo',
+    'Algoritmo',
+    'Hash_Referencia_Manifesto',
+    'Hash_Calculado_Local',
+    'Tamanho_Bytes',
+    'Tamanho_Formatado',
+    'Situacao',
+    'Observacoes',
+  ];
+
+  const rows = data.items.map((item, idx) => [
+    idx + 1,
+    `"${item.fileName.replace(/"/g, '""')}"`,
+    `"${item.relativePath.replace(/"/g, '""')}"`,
+    item.algorithm || 'SHA-256',
+    `"${(item.expectedHash || '').replace(/"/g, '""')}"`,
+    `"${(item.calculatedHash || '').replace(/"/g, '""')}"`,
+    item.size !== undefined ? item.size : '',
+    `"${item.formattedSize || ''}"`,
+    item.status,
+    `"${(item.notes || '').replace(/"/g, '""')}"`,
+  ]);
+
+  return [header.join(','), ...rows.map((r) => r.join(','))].join('\r\n');
+}
+
+export function exportManifestValidationTXT(data: ManifestValidationReportData): string {
+  let txt = `================================================================================\n`;
+  txt += `SAM HASH VERIFY — FORENSIC INTEGRITY SYSTEM\n`;
+  txt += `RELATÓRIO DE VALIDAÇÃO DE MANIFESTO DE INTEGRIDADE\n`;
+  txt += `================================================================================\n`;
+  txt += `ORIGEM DO MANIFESTO: ${data.manifestOrigin}\n`;
+  txt += `ARQUIVO MANIFESTO:   ${data.manifestName}\n`;
+  if (data.declaredDate) {
+    txt += `DATA DECLARADA:      ${data.declaredDate}\n`;
+  }
+  txt += `DATA DA VALIDAÇÃO:   ${data.validationTimestamp} (${data.timezone})\n`;
+  txt += `PROTOCOLO LOCAL:     ${data.id}\n`;
+  txt += `TOTAL DE REGISTROS:  ${data.totalItems}\n`;
+  txt += `  - Íntegros (Correspondentes): ${data.correspondentes}\n`;
+  txt += `  - Divergentes (Alterados):    ${data.divergentes}\n`;
+  txt += `  - Ausentes (Não Localizados): ${data.naoLocalizados}\n`;
+  txt += `  - Ambíguos:                   ${data.ambiguos}\n`;
+  txt += `  - Erros de Leitura:           ${data.erros}\n`;
+  txt += `================================================================================\n\n`;
+
+  data.items.forEach((item, idx) => {
+    txt += `[${idx + 1}] ${item.fileName}\n`;
+    txt += `  Caminho:         ${item.relativePath}\n`;
+    txt += `  Algoritmo:       ${item.algorithm}\n`;
+    txt += `  Hash Manifesto:  ${item.expectedHash || '(Ausente)'}\n`;
+    txt += `  Hash Calculado:  ${item.calculatedHash || '(Não calculado)'}\n`;
+    txt += `  Situação:        ${item.status}\n`;
+    if (item.notes) txt += `  Observação:      ${item.notes}\n`;
+    txt += `--------------------------------------------------------------------------------\n`;
+  });
+
+  return txt;
+}
+
+// -----------------------------------------------------------------------------
+// CLOUD VALIDATION EXPORTERS (GOOGLE & APPLE FORENSIC EXPORTS)
+// -----------------------------------------------------------------------------
+
+import { CloudValidationSession } from '../types';
+import { getForensicConclusion } from './cloudParsers';
+
+export function exportCloudValidationCSV(session: CloudValidationSession): string {
+  const header = [
+    'Seq',
+    'Provedor',
+    'Conta',
+    'Arquivo',
+    'Categoria_Produto',
+    'Algoritmo',
+    'Hash_Declarado_Oficial',
+    'Hash_Calculado_Local',
+    'Veredito',
+    'Gravidade',
+    'Tamanho_Bytes',
+    'Tamanho_Formatado',
+    'Documento_Origem',
+    'Observacoes',
+  ];
+
+  const rows = session.items.map((item) => [
+    item.sequence,
+    `"${item.provider}"`,
+    `"${(item.account || '').replace(/"/g, '""')}"`,
+    `"${item.fileName.replace(/"/g, '""')}"`,
+    `"${(item.categoryOrProduct || '').replace(/"/g, '""')}"`,
+    item.algorithm,
+    `"${(item.declaredHash || '').replace(/"/g, '""')}"`,
+    `"${(item.calculatedHash || '').replace(/"/g, '""')}"`,
+    `"${item.verdictLabel}"`,
+    `"${item.severity}"`,
+    item.fileSize !== undefined ? item.fileSize : '',
+    `"${item.formattedSize || ''}"`,
+    `"${(item.sourceDoc || '').replace(/"/g, '""')}"`,
+    `"${(item.notes || '').replace(/"/g, '""')}"`,
+  ]);
+
+  return [header.join(','), ...rows.map((r) => r.join(','))].join('\r\n');
+}
+
+export function exportCloudAccountCompletenessCSV(session: CloudValidationSession): string {
+  const header = [
+    'Conta_Alvo',
+    'Arquivos_Esperados',
+    'Arquivos_Entregues',
+    'Integros_OK',
+    'Alterados_Falha',
+    'Ausentes_Faltando',
+    'Extras_NaoDeclarados',
+    'Nao_Verificaveis',
+    'Status_Conta',
+  ];
+
+  const rows = session.accounts.map((acc) => [
+    `"${acc.account.replace(/"/g, '""')}"`,
+    acc.expected,
+    acc.delivered,
+    acc.integro,
+    acc.alterado,
+    acc.ausente,
+    acc.extra,
+    acc.naoVerificavel,
+    `"${acc.statusLabel}"`,
+  ]);
+
+  return [header.join(','), ...rows.map((r) => r.join(','))].join('\r\n');
+}
+
+/**
+ * Standard sha256sum / sha512sum list with strict UNIX LF line endings
+ * Rule from A-Ward: CRLF breaks sha256sum -c and 7-Zip, so newline MUST be \n
+ */
+export function exportCloudShaSumList(session: CloudValidationSession): string {
+  const lines: string[] = [];
+  lines.push(`# SAM HASH VERIFY — Lista de Conferência de Hashes (${session.provider})`);
+  lines.push(`# Gerado em: ${session.generatedAt}`);
+  if (session.procedureNumber) lines.push(`# Autos: ${session.procedureNumber}`);
+  if (session.internalReference) lines.push(`# Ref: ${session.internalReference}`);
+  lines.push(`# Algoritmo: ${session.provider === 'GOOGLE' ? 'SHA-512' : session.appleAlgorithm || 'SHA-256'}`);
+  lines.push('');
+
+  session.items.forEach((item) => {
+    const hash = item.calculatedHash || item.declaredHash;
+    if (hash) {
+      // standard sha256sum format: <hash> *<filename>
+      lines.push(`${hash} *${item.fileName}`);
+    }
+  });
+
+  return lines.join('\n') + '\n';
+}
+
+export function exportCloudValidationPDF(session: CloudValidationSession): void {
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4',
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 16;
+  const contentWidth = pageWidth - margin * 2;
+  let y = 16;
+
+  const checkPageBreak = (neededHeight: number) => {
+    if (y + neededHeight > pageHeight - 20) {
+      doc.addPage();
+      y = 16;
+      renderReportHeader(false);
+    }
+  };
+
+  const renderReportHeader = (isFirstPage: boolean) => {
+    // Header Bar
+    doc.setFillColor(15, 17, 21);
+    doc.rect(margin, y, contentWidth, isFirstPage ? 24 : 14, 'F');
+
+    // Accent line
+    doc.setFillColor(245, 121, 23);
+    doc.rect(margin, y, contentWidth, 1.5, 'F');
+
+    // Title
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(isFirstPage ? 12 : 10);
+    doc.text('SAM HASH VERIFY — FORENSIC INTEGRITY SYSTEM', margin + 5, y + (isFirstPage ? 9 : 8));
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(200, 205, 215);
+    if (isFirstPage) {
+      doc.text(
+        `CONFERÊNCIA DE INTEGRIDADE DE PRODUÇÃO EM NUVEM (${session.provider === 'GOOGLE' ? 'GOOGLE LLC' : 'APPLE INC.'})`,
+        margin + 5,
+        y + 16
+      );
+    }
+
+    y += isFirstPage ? 28 : 18;
+  };
+
+  // Page 1 Header
+  renderReportHeader(true);
+
+  // Metadata Box
+  doc.setFillColor(248, 249, 251);
+  doc.setDrawColor(220, 225, 232);
+  doc.rect(margin, y, contentWidth, 34, 'FD');
+
+  doc.setFontSize(9);
+  doc.setTextColor(30, 35, 45);
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('Provedor Judicial:', margin + 4, y + 6);
+  doc.setFont('helvetica', 'normal');
+  doc.text(session.provider === 'GOOGLE' ? 'Google LLC (Mountain View, CA)' : 'Apple Inc. (Cupertino, CA)', margin + 38, y + 6);
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('Autos do Processo:', margin + 4, y + 12);
+  doc.setFont('courier', 'bold');
+  doc.text(session.procedureNumber || 'Não especificado', margin + 38, y + 12);
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('Ref. / Solicitação:', margin + 4, y + 18);
+  doc.setFont('courier', 'normal');
+  doc.text(session.internalReference || 'N/A', margin + 38, y + 18);
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('Data Declarada:', margin + 4, y + 24);
+  doc.setFont('helvetica', 'normal');
+  doc.text(session.declaredDate || 'N/A', margin + 38, y + 24);
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('Data da Validação:', margin + 4, y + 30);
+  doc.setFont('helvetica', 'normal');
+  doc.text(session.generatedAt, margin + 38, y + 30);
+
+  // Right column of Metadata box
+  const col2X = margin + 105;
+  doc.setFont('helvetica', 'bold');
+  doc.text('Perito / Examinador:', col2X, y + 6);
+  doc.setFont('helvetica', 'normal');
+  doc.text(session.examinerName || 'Perícia Oficial', col2X + 35, y + 6);
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('Modalidade:', col2X, y + 12);
+  doc.setFont('helvetica', 'normal');
+  doc.text(
+    session.provider === 'GOOGLE'
+      ? 'PDF "Valores de Hash"'
+      : session.appleMode === 'ZIP_DECRYPTED'
+      ? 'Arquivos Decifrados (.zip)'
+      : 'Arquivos Cifrados (.zip.gpg)',
+    col2X + 35,
+    y + 12
+  );
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('Algoritmo:', col2X, y + 18);
+  doc.setFont('helvetica', 'normal');
+  doc.text(session.provider === 'GOOGLE' ? 'SHA-512 (128 hex)' : session.appleAlgorithm || 'SHA-256', col2X + 35, y + 18);
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('Taxa de Integridade:', col2X, y + 24);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(session.summary.totalAlterado > 0 ? 220 : 16, session.summary.totalAlterado > 0 ? 38 : 130, session.summary.totalAlterado > 0 ? 38 : 60);
+  doc.text(`${session.summary.integrityRate.toFixed(1)}% Íntegro`, col2X + 35, y + 24);
+
+  y += 38;
+
+  // KPI Summary Strip
+  checkPageBreak(25);
+  doc.setTextColor(20, 24, 30);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.text('RESUMO GERAL DA CONFERÊNCIA FORENSE', margin, y);
+  y += 4;
+
+  const kpis = [
+    { label: 'Contas', val: session.summary.totalAccounts.toString() },
+    { label: 'Esperados', val: session.summary.totalExpected.toString() },
+    { label: 'Entregues', val: session.summary.totalDelivered.toString() },
+    { label: 'Íntegros (OK)', val: session.summary.totalIntegro.toString() },
+    { label: 'Alterados (Falha)', val: session.summary.totalAlterado.toString() },
+    { label: 'Ausentes (Faltando)', val: session.summary.totalAusente.toString() },
+    { label: 'Extras', val: session.summary.totalExtra.toString() },
+  ];
+
+  const kpiW = contentWidth / kpis.length;
+  doc.setFillColor(243, 244, 246);
+  doc.rect(margin, y, contentWidth, 14, 'F');
+  doc.setDrawColor(210, 215, 222);
+  doc.rect(margin, y, contentWidth, 14, 'D');
+
+  kpis.forEach((kpi, i) => {
+    const kx = margin + i * kpiW;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.setTextColor(90, 95, 105);
+    doc.text(kpi.label, kx + kpiW / 2, y + 5, { align: 'center' });
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    if (kpi.label.includes('Alterados') && parseInt(kpi.val) > 0) {
+      doc.setTextColor(220, 38, 38);
+    } else if (kpi.label.includes('Íntegros')) {
+      doc.setTextColor(16, 140, 80);
+    } else if (kpi.label.includes('Ausentes') && parseInt(kpi.val) > 0) {
+      doc.setTextColor(217, 119, 6);
+    } else {
+      doc.setTextColor(20, 24, 30);
+    }
+    doc.text(kpi.val, kx + kpiW / 2, y + 11, { align: 'center' });
+  });
+
+  y += 18;
+
+  // Completeness by Account Table
+  checkPageBreak(30);
+  doc.setTextColor(20, 24, 30);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.text('COMPLETUDE E STATUS POR CONTA / IDENTIFICADOR', margin, y);
+  y += 4;
+
+  // Account Table Header
+  doc.setFillColor(30, 35, 45);
+  doc.rect(margin, y, contentWidth, 6, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(7.5);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Conta / Identificador', margin + 2, y + 4.2);
+  doc.text('Esperados', margin + 70, y + 4.2);
+  doc.text('Entregues', margin + 90, y + 4.2);
+  doc.text('Íntegros', margin + 110, y + 4.2);
+  doc.text('Alterados', margin + 128, y + 4.2);
+  doc.text('Ausentes', margin + 146, y + 4.2);
+  doc.text('Situação da Conta', margin + 162, y + 4.2);
+  y += 6;
+
+  session.accounts.forEach((acc, i) => {
+    checkPageBreak(6);
+    doc.setFillColor(i % 2 === 0 ? 255 : 248, i % 2 === 0 ? 255 : 250, i % 2 === 0 ? 255 : 252);
+    doc.rect(margin, y, contentWidth, 5.5, 'F');
+    doc.setDrawColor(230, 235, 240);
+    doc.line(margin, y + 5.5, margin + contentWidth, y + 5.5);
+
+    doc.setFont('courier', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(30, 35, 45);
+    const shortAcc = acc.account.length > 38 ? acc.account.slice(0, 36) + '...' : acc.account;
+    doc.text(shortAcc, margin + 2, y + 4);
+
+    doc.setFont('helvetica', 'normal');
+    doc.text(acc.expected.toString(), margin + 74, y + 4);
+    doc.text(acc.delivered.toString(), margin + 94, y + 4);
+
+    doc.setTextColor(16, 140, 80);
+    doc.text(acc.integro.toString(), margin + 114, y + 4);
+
+    doc.setTextColor(acc.alterado > 0 ? 220 : 100, acc.alterado > 0 ? 38 : 105, acc.alterado > 0 ? 38 : 115);
+    doc.text(acc.alterado.toString(), margin + 132, y + 4);
+
+    doc.setTextColor(acc.ausente > 0 ? 217 : 100, acc.ausente > 0 ? 119 : 105, acc.ausente > 0 ? 6 : 115);
+    doc.text(acc.ausente.toString(), margin + 150, y + 4);
+
+    // Status label
+    doc.setFont('helvetica', 'bold');
+    if (acc.status === 'INTEGRA') {
+      doc.setTextColor(16, 140, 80);
+    } else if (acc.status === 'SEM_ENTREGA') {
+      doc.setTextColor(220, 38, 38);
+    } else if (acc.status === 'DIVERGENTE') {
+      doc.setTextColor(220, 38, 38);
+    } else {
+      doc.setTextColor(217, 119, 6);
+    }
+    doc.text(acc.statusLabel, margin + 162, y + 4);
+
+    y += 5.5;
+  });
+
+  y += 6;
+
+  // Detailed Verification Items Table
+  checkPageBreak(30);
+  doc.setTextColor(20, 24, 30);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.text('CONFERÊNCIA DETALHADA DOS ARQUIVOS E HASHES', margin, y);
+  y += 4;
+
+  session.items.forEach((item) => {
+    checkPageBreak(18);
+
+    doc.setFillColor(248, 250, 252);
+    doc.rect(margin, y, contentWidth, 16, 'F');
+    doc.setDrawColor(220, 225, 230);
+    doc.rect(margin, y, contentWidth, 16, 'D');
+
+    // Row 1: Seq, File Name, Account, Verdict Badge
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.setTextColor(70, 75, 85);
+    doc.text(`[${item.sequence}]`, margin + 2, y + 4);
+
+    doc.setTextColor(15, 23, 42);
+    const fname = item.fileName.length > 55 ? item.fileName.slice(0, 52) + '...' : item.fileName;
+    doc.text(fname, margin + 10, y + 4);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(100, 105, 115);
+    doc.text(`Conta: ${item.account}`, margin + 105, y + 4);
+
+    // Verdict Tag
+    doc.setFont('helvetica', 'bold');
+    if (item.verdict === 'INTEGRO') {
+      doc.setTextColor(16, 140, 80);
+    } else if (item.verdict === 'ALTERADO') {
+      doc.setTextColor(220, 38, 38);
+    } else if (item.verdict === 'AUSENTE') {
+      doc.setTextColor(217, 119, 6);
+    } else {
+      doc.setTextColor(100, 105, 115);
+    }
+    doc.text(item.verdictLabel, margin + contentWidth - 4, y + 4, { align: 'right' });
+
+    // Row 2: Declared Hash (Full, Monospace)
+    doc.setFont('courier', 'normal');
+    doc.setFontSize(6.5);
+    doc.setTextColor(80, 85, 95);
+    doc.text(`Oficial:   ${item.declaredHash || '(Nenhum hash declarado no documento do provedor)'}`, margin + 2, y + 8.5);
+
+    // Row 3: Calculated Hash (Full, Monospace)
+    doc.text(`Calculado: ${item.calculatedHash || '(Arquivo não localizado para cálculo de hash)'}`, margin + 2, y + 13);
+
+    y += 18;
+  });
+
+  // Technical Conclusion Block
+  checkPageBreak(40);
+  doc.setFillColor(245, 247, 250);
+  doc.rect(margin, y, contentWidth, 32, 'F');
+  doc.setDrawColor(215, 220, 228);
+  doc.rect(margin, y, contentWidth, 32, 'D');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(20, 24, 30);
+  doc.text('CONCLUSÃO TÉCNICA E CUSTÓDIA FORENSE', margin + 4, y + 5);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(60, 65, 75);
+
+  const conclusion = getForensicConclusion(session.summary, session.provider);
+  const conclusionText = `${conclusion.title}: ${conclusion.message}`;
+
+  const splitConc = doc.splitTextToSize(conclusionText, contentWidth - 8);
+  doc.text(splitConc, margin + 4, y + 11);
+
+  // Verification Seal
+  doc.setFont('courier', 'bold');
+  doc.setFontSize(6.5);
+  doc.setTextColor(80, 90, 105);
+  doc.text(`Selo Forense da Sessão (SHA-256): ${session.verificationSealSha256}`, margin + 4, y + 27);
+
+  y += 38;
+
+  // Institutional Footer Credit on all pages
+  const totalPages = doc.getNumberOfPages();
+  for (let p = 1; p <= totalPages; p++) {
+    doc.setPage(p);
+    doc.setDrawColor(220, 225, 230);
+    doc.setLineWidth(0.3);
+    doc.line(margin, pageHeight - 14, margin + contentWidth, pageHeight - 14);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    doc.setTextColor(120, 125, 135);
+    doc.text(
+      'SAM HASH VERIFY — APF Ramon (ramon.grsl) | Polícia Federal — XIV Cellebrite — Turma A — 2026',
+      margin,
+      pageHeight - 9
+    );
+    doc.text(`Página ${p} de ${totalPages}`, margin + contentWidth, pageHeight - 9, { align: 'right' });
+  }
+
+  const sanitizedProvider = session.provider.toLowerCase();
+  doc.save(`SAM_HASH_VERIFY_${sanitizedProvider}_${Date.now()}.pdf`);
+}
+
 

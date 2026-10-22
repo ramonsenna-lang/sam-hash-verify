@@ -11,6 +11,7 @@ import { GenerateHashModule } from './components/GenerateHashModule';
 import { BatchValidationModule } from './components/BatchValidationModule';
 import { ForensicExtractionModule } from './components/ForensicExtractionModule';
 import { ExtractionManifestModule } from './components/ExtractionManifestModule';
+import { CloudValidationModule } from './components/CloudValidationModule';
 import { FolderHashModule } from './components/FolderHashModule';
 import { FileComparisonModule } from './components/FileComparisonModule';
 import { ReportsHistoryModule } from './components/ReportsHistoryModule';
@@ -91,6 +92,10 @@ export default function App() {
 
         {activeTab === 'manifesto' && (
           <ExtractionManifestModule onAddSessionRecord={handleAddSessionRecord} />
+        )}
+
+        {activeTab === 'nuvens' && (
+          <CloudValidationModule onAddSessionRecord={handleAddSessionRecord} />
         )}
 
         {activeTab === 'extracao' && (

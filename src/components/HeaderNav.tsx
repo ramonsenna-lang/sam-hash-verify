@@ -16,6 +16,7 @@ import {
   FileCheck2,
   FolderTree,
   Settings,
+  Cloud,
 } from 'lucide-react';
 import { ForensicLogo } from './ForensicLogo';
 
@@ -43,6 +44,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
     { id: 'pastas', label: 'Hash de Pastas', icon: FolderTree },
     { id: 'lote', label: 'Lote', icon: Layers },
     { id: 'manifesto', label: 'Manifesto', icon: FileCheck2 },
+    { id: 'nuvens', label: 'Validação Nuvens', icon: Cloud },
     { id: 'extracao', label: 'Extrações Forenses', icon: HardDrive },
     { id: 'comparar', label: 'Comparar', icon: GitCompare },
     { id: 'relatorios', label: 'Relatórios', icon: FileText, badge: sessionRecordCount > 0 ? sessionRecordCount : undefined },

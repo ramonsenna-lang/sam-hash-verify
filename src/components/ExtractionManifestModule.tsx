@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   FileCheck2,
   FolderOpen,
@@ -15,12 +15,19 @@ import {
   Filter,
   ShieldCheck,
   FileText,
+  RotateCcw,
+  Trash2,
+  FileSearch,
+  AlertCircle,
+  Check,
+  FolderTree,
 } from 'lucide-react';
 import {
   ExtractionManifestItem,
   ManifestVerificationItem,
   ManifestItemStatus,
   SingleValidationRecord,
+  HashAlgorithm,
 } from '../types';
 import {
   computeHashes,
@@ -29,7 +36,20 @@ import {
   generateLocalVerificationId,
   extractFileMetadata,
 } from '../utils/crypto';
-import { downloadTextFile, formatForensicDate } from '../utils/exporter';
+import {
+  downloadTextFile,
+  formatForensicDate,
+  exportManifestValidationPDF,
+  exportManifestValidationCSV,
+  exportManifestValidationTXT,
+  ManifestValidationReportData,
+} from '../utils/exporter';
+import {
+  detectAndParseManifest,
+  ParseManifestResult,
+  ParsedManifestRecord,
+} from '../utils/exactFileParser';
+import { auditLogger } from '../utils/auditLogger';
 
 interface ExtractionManifestModuleProps {
   onAddSessionRecord: (record: SingleValidationRecord) => void;
@@ -40,26 +60,47 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
 }) => {
   const [activeSubMode, setActiveSubMode] = useState<'GERAR' | 'VALIDAR'>('GERAR');
 
-  // Generation state
+  // ----------------------------------------------------
+  // SUB-MODE 1: GENERATE MANIFEST STATE
+  // ----------------------------------------------------
   const [generationFiles, setGenerationFiles] = useState<File[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState(0);
   const [currentFileIdx, setCurrentFileIdx] = useState(0);
   const [manifestItems, setManifestItems] = useState<ExtractionManifestItem[]>([]);
   const [manifestNotes, setManifestNotes] = useState('');
+  const [genStatusMessage, setGenStatusMessage] = useState<string | null>(null);
 
-  // Validation state
+  // Clear confirmation modals
+  const [confirmClearGenAllOpen, setConfirmClearGenAllOpen] = useState(false);
+  const [confirmClearValAllOpen, setConfirmClearValAllOpen] = useState(false);
+
+  // Operation sequence counters to invalidate stale async jobs
+  const genOpSeqRef = useRef<number>(0);
+  const valOpSeqRef = useRef<number>(0);
+
+  // ----------------------------------------------------
+  // SUB-MODE 2: VALIDATE MANIFEST STATE
+  // ----------------------------------------------------
   const [verificationFiles, setVerificationFiles] = useState<File[]>([]);
   const [importedManifestText, setImportedManifestText] = useState('');
+  const [selectedManifestFileName, setSelectedManifestFileName] = useState<string>('');
+  const [detectedManifest, setDetectedManifest] = useState<ParseManifestResult | null>(null);
+
   const [isValidating, setIsValidating] = useState(false);
   const [validationProgress, setValidationProgress] = useState(0);
   const [verificationResults, setVerificationResults] = useState<ManifestVerificationItem[]>([]);
   const [manifestSearch, setManifestSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [valStatusMessage, setValStatusMessage] = useState<string | null>(null);
 
+  // Ambiguity resolution state: maps item ID to selected candidate file index
+  const [ambiguityResolutions, setAmbiguityResolutions] = useState<Record<string, number>>({});
+
+  // Abort Controllers and File Input Refs
   const abortGenRef = useRef<AbortController | null>(null);
   const abortValRef = useRef<AbortController | null>(null);
+
   const genFileInputRef = useRef<HTMLInputElement>(null);
   const genFolderInputRef = useRef<HTMLInputElement>(null);
   const valFileInputRef = useRef<HTMLInputElement>(null);
@@ -67,24 +108,42 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
   const manifestFileInputRef = useRef<HTMLInputElement>(null);
 
   // ----------------------------------------------------
-  // SUB-MODE 1: GENERATE MANIFEST
+  // AUTO-PARSE MANIFEST TEXT ON CHANGE
+  // ----------------------------------------------------
+  useEffect(() => {
+    if (!importedManifestText.trim()) {
+      setDetectedManifest(null);
+      return;
+    }
+
+    try {
+      const parsed = detectAndParseManifest(importedManifestText);
+      setDetectedManifest(parsed);
+    } catch (err: unknown) {
+      console.error('Erro ao analisar manifesto:', err);
+    }
+  }, [importedManifestText]);
+
+  // ----------------------------------------------------
+  // SUB-MODE 1: GENERATE MANIFEST HANDLERS
   // ----------------------------------------------------
   const handleGenFilesAdded = (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
     const files = Array.from(fileList);
     setGenerationFiles((prev) => [...prev, ...files]);
-    setStatusMessage(`${files.length} arquivo(s) adicionado(s) para geração do manifesto.`);
+    setGenStatusMessage(`${files.length} arquivo(s) adicionado(s) para geração do manifesto.`);
   };
 
   const handleStartGeneration = async () => {
     if (generationFiles.length === 0) {
-      setStatusMessage('Adicione ao menos um arquivo ou pasta para gerar o manifesto.');
+      setGenStatusMessage('Adicione ao menos um arquivo ou pasta para gerar o manifesto.');
       return;
     }
 
+    const currentOp = ++genOpSeqRef.current;
     setIsGenerating(true);
     setGenerationProgress(0);
-    setStatusMessage(null);
+    setGenStatusMessage(null);
     const abort = new AbortController();
     abortGenRef.current = abort;
 
@@ -93,7 +152,7 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
 
     try {
       for (let i = 0; i < generationFiles.length; i++) {
-        if (abort.signal.aborted) break;
+        if (abort.signal.aborted || currentOp !== genOpSeqRef.current) break;
 
         setCurrentFileIdx(i);
         const f = generationFiles[i];
@@ -103,11 +162,14 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
           f,
           ['SHA-256'],
           (pct) => {
+            if (currentOp !== genOpSeqRef.current) return;
             const overall = Math.round(((i + pct / 100) / generationFiles.length) * 100);
             setGenerationProgress(overall);
           },
           abort.signal
         );
+
+        if (currentOp !== genOpSeqRef.current) break;
 
         const sha256 = hashes['SHA-256'];
         const item: ExtractionManifestItem = {
@@ -122,239 +184,387 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
         };
 
         createdItems.push(item);
-
-        // Record in session
-        const meta = extractFileMetadata(f, relPath);
-        onAddSessionRecord({
-          id: item.id,
-          timestamp: formatted,
-          timezone: tz,
-          fileMetadata: meta,
-          algorithm: 'SHA-256',
-          referenceHash: '',
-          calculatedHash: sha256,
-          status: 'SEM_REFERENCIA',
-          notes: `Manifesto de Integridade da Extração [${relPath}]`,
-        });
       }
 
-      setManifestItems(createdItems);
-      setStatusMessage(`Manifesto gerado com sucesso para ${createdItems.length} arquivo(s).`);
+      if (currentOp === genOpSeqRef.current && !abort.signal.aborted) {
+        setManifestItems(createdItems);
+        setGenStatusMessage(`Manifesto gerado com sucesso: ${createdItems.length} arquivo(s) indexados.`);
+        auditLogger.addLog({
+          operation: 'MANIFESTO_GERADO',
+          status: 'SUCESSO',
+          message: `Manifesto SHA-256 gerado localmente com ${createdItems.length} arquivos.`,
+          filesCount: createdItems.length,
+        });
+      }
     } catch (err: unknown) {
       if ((err as Error)?.name === 'AbortError') {
-        setStatusMessage('Geração do manifesto cancelada pelo usuário.');
+        setGenStatusMessage('Operação de geração de manifesto cancelada.');
       } else {
-        setStatusMessage(
-          err instanceof Error ? `Erro: ${err.message}` : 'Erro durante o cálculo do manifesto.'
+        setGenStatusMessage(
+          err instanceof Error ? `Erro: ${err.message}` : 'Erro no cálculo do manifesto.'
         );
       }
     } finally {
-      setIsGenerating(false);
-      abortGenRef.current = null;
+      if (currentOp === genOpSeqRef.current) {
+        setIsGenerating(false);
+        abortGenRef.current = null;
+      }
     }
   };
 
-  const exportManifestCSV = () => {
-    if (manifestItems.length === 0) return;
-    const header = ['Arquivo', 'Caminho_Relativo', 'Tamanho_Bytes', 'Algoritmo', 'Hash_SHA256', 'Data_Hora'];
-    const rows = manifestItems.map((item) => [
-      `"${item.fileName.replace(/"/g, '""')}"`,
-      `"${item.relativePath.replace(/"/g, '""')}"`,
-      item.size,
-      item.algorithm,
-      `"${item.hash}"`,
-      `"${item.timestamp}"`,
-    ]);
-    const csv = [header.join(','), ...rows.map((r) => r.join(','))].join('\r\n');
-    downloadTextFile(csv, `Manifesto_Integridade_Extracao_${Date.now()}.csv`, 'text/csv;charset=utf-8');
+  // 1.1 Limpar Seleção (Gerar Manifesto)
+  const handleClearGenSelection = () => {
+    if (isGenerating) {
+      const confirmCancel = window.confirm(
+        'Existe um processamento de cálculo ativo. Deseja cancelar a operação e limpar a seleção?'
+      );
+      if (!confirmCancel) return;
+      abortGenRef.current?.abort();
+    }
+
+    genOpSeqRef.current++;
+    setIsGenerating(false);
+    setGenerationFiles([]);
+    setManifestItems([]);
+    setGenerationProgress(0);
+    setCurrentFileIdx(0);
+    setGenStatusMessage(null);
+
+    // Reset input elements
+    if (genFileInputRef.current) genFileInputRef.current.value = '';
+    if (genFolderInputRef.current) genFolderInputRef.current.value = '';
+  };
+
+  // 1.2 Limpar Tudo (Gerar Manifesto)
+  const handleConfirmClearGenAll = () => {
+    if (isGenerating) {
+      abortGenRef.current?.abort();
+    }
+
+    genOpSeqRef.current++;
+    setIsGenerating(false);
+    setGenerationFiles([]);
+    setManifestItems([]);
+    setManifestNotes('');
+    setGenerationProgress(0);
+    setCurrentFileIdx(0);
+    setGenStatusMessage(null);
+
+    if (genFileInputRef.current) genFileInputRef.current.value = '';
+    if (genFolderInputRef.current) genFolderInputRef.current.value = '';
+
+    setConfirmClearGenAllOpen(false);
   };
 
   const exportManifestTXT = () => {
     if (manifestItems.length === 0) return;
+    const { formatted, tz } = formatForensicDate();
+
     let txt = `================================================================================\n`;
     txt += `SAM HASH VERIFY — FORENSIC INTEGRITY SYSTEM\n`;
-    txt += `MANIFESTO DE INTEGRIDADE DA EXTRAÇÃO FORENSE\n`;
-    txt += `Data de Geração: ${new Date().toLocaleString('pt-BR')}\n`;
-    txt += `Total de Arquivos: ${manifestItems.length}\n`;
-    txt += `Algoritmo Padronizado: SHA-256\n`;
-    txt += `Polícia Federal — XIV Cellebrite — Turma A — 2026\n`;
-    txt += `Desenvolvido pelo APF Ramon (ramon.grsl)\n`;
+    txt += `MANIFESTO DE INTEGRIDADE DA EXTRAÇÃO FORENSE (SHA-256)\n`;
+    txt += `Data/Hora de Geração: ${formatted} (${tz})\n`;
+    txt += `Total de Arquivos:    ${manifestItems.length}\n`;
+    if (manifestNotes.trim()) {
+      txt += `Notas da Extração:    ${manifestNotes.trim()}\n`;
+    }
+    txt += `Desenvolvido pelo APF Ramon (ramon.grsl) | Polícia Federal — XIV Cellebrite — Turma A — 2026\n`;
     txt += `================================================================================\n\n`;
 
-    manifestItems.forEach((m) => {
-      txt += `${m.hash}  *${m.relativePath}\n`;
+    manifestItems.forEach((item) => {
+      txt += `${item.hash}  *${item.relativePath}\n`;
     });
 
-    downloadTextFile(txt, `Manifesto_Integridade_Extracao_${Date.now()}.txt`);
+    downloadTextFile(txt, `Manifesto_Integridade_SHA256_${Date.now()}.txt`);
+  };
+
+  const exportManifestCSV = () => {
+    if (manifestItems.length === 0) return;
+    const header = ['Arquivo', 'Caminho_Relativo', 'Tamanho_Bytes', 'Tamanho_Formatado', 'Algoritmo', 'Hash_Calculado', 'Data_Hora'];
+    const rows = manifestItems.map((item) => [
+      `"${item.fileName.replace(/"/g, '""')}"`,
+      `"${item.relativePath.replace(/"/g, '""')}"`,
+      item.size,
+      `"${item.formattedSize}"`,
+      item.algorithm,
+      `"${item.hash}"`,
+      `"${item.timestamp}"`,
+    ]);
+
+    const csv = [header.join(','), ...rows.map((r) => r.join(','))].join('\r\n');
+    downloadTextFile(csv, `Manifesto_Integridade_SHA256_${Date.now()}.csv`, 'text/csv;charset=utf-8');
   };
 
   // ----------------------------------------------------
-  // SUB-MODE 2: VALIDATE EXISTING MANIFEST
+  // SUB-MODE 2: VALIDATE MANIFEST HANDLERS
   // ----------------------------------------------------
   const handleManifestUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelectedManifestFileName(file.name);
       const reader = new FileReader();
       reader.onload = () => {
         if (typeof reader.result === 'string') {
           setImportedManifestText(reader.result);
-          setStatusMessage(`Manifesto "${file.name}" carregado. Adicione os arquivos atuais para conferência.`);
+          setValStatusMessage(`Manifesto "${file.name}" carregado. Selecione agora os arquivos ou pasta atual para conferência.`);
         }
       };
       reader.readAsText(file);
     }
+    e.target.value = '';
   };
 
+  const handleValFilesAdded = (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+    const files = Array.from(fileList);
+    setVerificationFiles(files);
+    setAmbiguityResolutions({});
+    setValStatusMessage(`${files.length} arquivo(s) local(is) selecionado(s) para conferência.`);
+  };
+
+  // 2.1 Limpar Seleção (Validar Manifesto)
+  // Keeps imported manifest! Removes verification files and validation results
+  const handleClearValSelection = () => {
+    if (isValidating) {
+      const confirmCancel = window.confirm(
+        'Existe uma conferência ativa. Deseja cancelar a operação e limpar os arquivos selecionados?'
+      );
+      if (!confirmCancel) return;
+      abortValRef.current?.abort();
+    }
+
+    valOpSeqRef.current++;
+    setIsValidating(false);
+    setVerificationFiles([]);
+    setVerificationResults([]);
+    setValidationProgress(0);
+    setAmbiguityResolutions({});
+    setValStatusMessage(null);
+
+    if (valFileInputRef.current) valFileInputRef.current.value = '';
+    if (valFolderInputRef.current) valFolderInputRef.current.value = '';
+  };
+
+  // 2.2 Limpar Tudo (Validar Manifesto)
+  const handleConfirmClearValAll = () => {
+    if (isValidating) {
+      abortValRef.current?.abort();
+    }
+
+    valOpSeqRef.current++;
+    setIsValidating(false);
+    setVerificationFiles([]);
+    setImportedManifestText('');
+    setSelectedManifestFileName('');
+    setDetectedManifest(null);
+    setVerificationResults([]);
+    setValidationProgress(0);
+    setAmbiguityResolutions({});
+    setValStatusMessage(null);
+
+    if (valFileInputRef.current) valFileInputRef.current.value = '';
+    if (valFolderInputRef.current) valFolderInputRef.current.value = '';
+    if (manifestFileInputRef.current) manifestFileInputRef.current.value = '';
+
+    setConfirmClearValAllOpen(false);
+  };
+
+  // Start Validation Execution
   const handleStartValidation = async () => {
-    if (!importedManifestText.trim()) {
-      setStatusMessage('Carregue ou cole o texto do manifesto original para iniciar a conferência.');
+    if (!detectedManifest || detectedManifest.records.length === 0) {
+      setValStatusMessage('Carregue ou cole o texto de um manifesto com registros válidos para iniciar.');
       return;
     }
 
     if (verificationFiles.length === 0) {
-      setStatusMessage('Selecione os arquivos ou pasta atual para conferir contra o manifesto.');
+      setValStatusMessage('Selecione os arquivos ou a pasta atual para conferir contra o manifesto.');
       return;
     }
 
+    const currentOp = ++valOpSeqRef.current;
     setIsValidating(true);
     setValidationProgress(0);
-    setStatusMessage(null);
+    setValStatusMessage(null);
     const abort = new AbortController();
     abortValRef.current = abort;
 
     const { formatted, tz } = formatForensicDate();
 
     try {
-      // 1. Parse manifest entries
-      const manifestLines = importedManifestText.split(/\r?\n/).filter((l) => l.trim().length > 0);
-      const manifestDict = new Map<string, { expectedHash: string; originalPath: string }>();
+      // Index local files by normalized relative path and by pure filename
+      const localFilesByPath = new Map<string, File>();
+      const localFilesByName = new Map<string, File[]>();
 
-      for (const line of manifestLines) {
-        const trimmed = line.trim();
-        if (trimmed.startsWith('#') || trimmed.startsWith('//')) continue;
+      for (const file of verificationFiles) {
+        const rel = ((file as { webkitRelativePath?: string }).webkitRelativePath || file.name)
+          .replace(/\\/g, '/')
+          .toLowerCase();
 
-        // Try CSV
-        if (trimmed.includes(',')) {
-          const parts = trimmed.split(',').map((p) => p.trim().replace(/^["']|["']$/g, ''));
-          if (parts[0].toUpperCase() === 'ARQUIVO' || parts[0].toUpperCase() === 'FILENAME') continue;
-          if (parts.length >= 5 && parts[4].length === 64) {
-            // Format: Arquivo, Caminho_Relativo, Tamanho_Bytes, Algoritmo, Hash_SHA256, Data_Hora
-            const path = parts[1] || parts[0];
-            manifestDict.set(path.toLowerCase(), {
-              expectedHash: parts[4].toLowerCase(),
-              originalPath: path,
-            });
-            continue;
-          }
-          if (parts[0].length === 64) {
-            manifestDict.set(parts[1].toLowerCase(), {
-              expectedHash: parts[0].toLowerCase(),
-              originalPath: parts[1],
-            });
-            continue;
-          }
-        }
+        localFilesByPath.set(rel, file);
 
-        // Try GNU coreutils: HASH  *PATH or HASH  PATH
-        const match = trimmed.match(/^([a-fA-F0-9]{32,128})\s+[\*]?(.+)$/);
-        if (match) {
-          const hash = match[1].toLowerCase();
-          const p = match[2].trim();
-          manifestDict.set(p.toLowerCase(), { expectedHash: hash, originalPath: p });
-          continue;
-        }
-      }
-
-      // 2. Map current local files
-      const localFileMap = new Map<string, File>();
-      for (const f of verificationFiles) {
-        const rel = ((f as { webkitRelativePath?: string }).webkitRelativePath || f.name).toLowerCase();
-        localFileMap.set(rel, f);
+        const nameLower = file.name.toLowerCase();
+        const existing = localFilesByName.get(nameLower) || [];
+        existing.push(file);
+        localFilesByName.set(nameLower, existing);
       }
 
       const results: ManifestVerificationItem[] = [];
-      const processedLocalPaths = new Set<string>();
+      const usedLocalFiles = new Set<File>();
+      const totalRecords = detectedManifest.records.length;
 
-      let processedCount = 0;
-      const totalOps = manifestDict.size + localFileMap.size;
+      for (let i = 0; i < totalRecords; i++) {
+        if (abort.signal.aborted || currentOp !== valOpSeqRef.current) break;
 
-      // Check all entries listed in the manifest
-      for (const [key, manifestInfo] of manifestDict.entries()) {
-        if (abort.signal.aborted) break;
+        const record = detectedManifest.records[i];
+        const seq = i + 1;
 
-        const localFile = localFileMap.get(key) || localFileMap.get(manifestInfo.originalPath.toLowerCase());
-
-        if (!localFile) {
-          // File is missing!
+        if (!record.isValid) {
           results.push({
             id: generateLocalVerificationId(),
-            fileName: manifestInfo.originalPath.split('/').pop() || manifestInfo.originalPath,
-            relativePath: manifestInfo.originalPath,
-            algorithm: 'SHA-256',
-            expectedHash: manifestInfo.expectedHash,
+            sequence: seq,
+            lineNumber: record.lineNumber,
+            fileName: record.fileName || 'Registro Inválido',
+            relativePath: record.relativePath || record.rawLine,
+            algorithm: record.algorithm,
+            expectedHash: record.expectedHash,
             calculatedHash: undefined,
-            status: 'AUSENTE',
-            notes: 'Arquivo listado no manifesto mas não encontrado na pasta selecionada.',
+            status: 'REGISTRO_INVALIDO',
+            notes: record.errorMessage || 'Linha do manifesto contém formato inválido.',
           });
-        } else {
-          processedLocalPaths.add(
-            ((localFile as { webkitRelativePath?: string }).webkitRelativePath || localFile.name).toLowerCase()
-          );
+          continue;
+        }
 
-          // Calculate hash of local file
-          const computed = await computeHashes(
-            localFile,
-            ['SHA-256'],
+        // Association Rule:
+        // 1. Exact match by relative path
+        const normPath = record.relativePath.replace(/\\/g, '/').toLowerCase();
+        let targetFile: File | undefined = localFilesByPath.get(normPath);
+
+        let candidateFiles: File[] = [];
+
+        if (!targetFile) {
+          // 2. Match by filename
+          const nameMatches = localFilesByName.get(record.fileName.toLowerCase()) || [];
+
+          // Check if user manually resolved this ambiguity
+          const manualChoiceIdx = ambiguityResolutions[String(seq)];
+          if (manualChoiceIdx !== undefined && nameMatches[manualChoiceIdx]) {
+            targetFile = nameMatches[manualChoiceIdx];
+          } else if (nameMatches.length === 1) {
+            // Exactly 1 candidate found
+            targetFile = nameMatches[0];
+          } else if (nameMatches.length > 1) {
+            // Ambiguous multiple files found with identical filename in different subfolders
+            candidateFiles = nameMatches;
+          }
+        }
+
+        // If ambiguous
+        if (!targetFile && candidateFiles.length > 1) {
+          results.push({
+            id: generateLocalVerificationId(),
+            sequence: seq,
+            lineNumber: record.lineNumber,
+            fileName: record.fileName,
+            relativePath: record.relativePath,
+            algorithm: record.algorithm,
+            expectedHash: record.expectedHash,
+            calculatedHash: undefined,
+            status: 'ASSOCIACAO_AMBIGUA',
+            candidateFiles,
+            notes: `Encontrados ${candidateFiles.length} arquivos com o mesmo nome em subpastas distintas. Selecione o arquivo correto para validação.`,
+          });
+          continue;
+        }
+
+        // If file not found
+        if (!targetFile) {
+          results.push({
+            id: generateLocalVerificationId(),
+            sequence: seq,
+            lineNumber: record.lineNumber,
+            fileName: record.fileName,
+            relativePath: record.relativePath,
+            algorithm: record.algorithm,
+            expectedHash: record.expectedHash,
+            calculatedHash: undefined,
+            status: 'ARQUIVO_NAO_LOCALIZADO',
+            notes: 'Arquivo listado no manifesto mas não encontrado na pasta ou arquivos selecionados.',
+          });
+          continue;
+        }
+
+        // Target file identified: calculate cryptographic hash
+        usedLocalFiles.add(targetFile);
+
+        try {
+          const hashes = await computeHashes(
+            targetFile,
+            [record.algorithm],
             undefined,
             abort.signal
           );
-          const calcHash = computed['SHA-256'].toLowerCase();
-          const match = calcHash === manifestInfo.expectedHash;
-          const status: ManifestItemStatus = match ? 'CORRESPONDENTE' : 'DIVERGENTE';
+
+          if (currentOp !== valOpSeqRef.current) break;
+
+          const calculated = hashes[record.algorithm];
+          const isMatch = calculated.toLowerCase() === record.expectedHash.toLowerCase();
+          const status: ManifestItemStatus = isMatch ? 'CORRESPONDENTE' : 'DIVERGENTE';
+
+          const itemRel = (targetFile as { webkitRelativePath?: string }).webkitRelativePath || targetFile.name;
 
           results.push({
             id: generateLocalVerificationId(),
-            fileName: localFile.name,
-            relativePath: (localFile as { webkitRelativePath?: string }).webkitRelativePath || localFile.name,
-            size: localFile.size,
-            formattedSize: formatShortBytes(localFile.size),
-            algorithm: 'SHA-256',
-            expectedHash: manifestInfo.expectedHash,
-            calculatedHash: calcHash,
+            sequence: seq,
+            lineNumber: record.lineNumber,
+            fileName: targetFile.name,
+            relativePath: itemRel,
+            size: targetFile.size,
+            formattedSize: formatShortBytes(targetFile.size),
+            algorithm: record.algorithm,
+            expectedHash: record.expectedHash,
+            calculatedHash: calculated,
             status,
-            notes: match
-              ? 'Integridade do arquivo confirmada contra o manifesto.'
-              : 'O arquivo atual difere do registrado originalmente.',
+            notes: isMatch
+              ? 'Hash calculado idêntico ao hash de referência do manifesto.'
+              : 'Hash calculado difere do hash registrado no manifesto (dados alterados).',
           });
 
-          // Add to session records
-          const meta = extractFileMetadata(localFile);
+          // Add to session record
+          const meta = extractFileMetadata(targetFile);
           onAddSessionRecord({
             id: generateLocalVerificationId(),
             timestamp: formatted,
             timezone: tz,
             fileMetadata: meta,
-            algorithm: 'SHA-256',
-            referenceHash: manifestInfo.expectedHash,
-            calculatedHash: calcHash,
-            status: match ? 'CORRESPONDENTE' : 'DIVERGENTE',
-            notes: `Validação de Manifesto [${meta.relativePath}]`,
+            algorithm: record.algorithm,
+            referenceHash: record.expectedHash,
+            calculatedHash: calculated,
+            status: isMatch ? 'CORRESPONDENTE' : 'DIVERGENTE',
+            notes: `Validação Manifesto [${detectedManifest.formatLabel}]: ${meta.name}`,
+          });
+        } catch (err: unknown) {
+          results.push({
+            id: generateLocalVerificationId(),
+            sequence: seq,
+            lineNumber: record.lineNumber,
+            fileName: targetFile.name,
+            relativePath: (targetFile as { webkitRelativePath?: string }).webkitRelativePath || targetFile.name,
+            size: targetFile.size,
+            formattedSize: formatShortBytes(targetFile.size),
+            algorithm: record.algorithm,
+            expectedHash: record.expectedHash,
+            calculatedHash: undefined,
+            status: 'ERRO_LEITURA',
+            notes: `Erro de leitura ao calcular hash: ${err instanceof Error ? err.message : String(err)}`,
           });
         }
 
-        processedCount++;
-        setValidationProgress(Math.round((processedCount / totalOps) * 100));
+        setValidationProgress(Math.round(((i + 1) / totalRecords) * 100));
       }
 
-      // Check for additional files present locally that were NOT in the manifest
-      for (const [key, file] of localFileMap.entries()) {
-        if (abort.signal.aborted) break;
-
-        if (!processedLocalPaths.has(key)) {
-          // Additional file detected!
-          const computed = await computeHashes(file, ['SHA-256'], undefined, abort.signal);
-          const calcHash = computed['SHA-256'].toLowerCase();
-
+      // Check for additional local files not present in the manifest
+      for (const file of verificationFiles) {
+        if (!usedLocalFiles.has(file)) {
           results.push({
             id: generateLocalVerificationId(),
             fileName: file.name,
@@ -363,58 +573,201 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
             formattedSize: formatShortBytes(file.size),
             algorithm: 'SHA-256',
             expectedHash: undefined,
-            calculatedHash: calcHash,
+            calculatedHash: undefined,
             status: 'ADICIONAL',
-            notes: 'Arquivo presente na evidência atual que NÃO constava no manifesto original.',
+            notes: 'Arquivo existente na pasta atual que NÃO constava no manifesto de referência.',
           });
         }
       }
 
-      setVerificationResults(results);
-      setStatusMessage(`Validação concluída: ${results.length} itens analisados.`);
+      if (currentOp === valOpSeqRef.current && !abort.signal.aborted) {
+        setVerificationResults(results);
+        const correspondentes = results.filter((r) => r.status === 'CORRESPONDENTE').length;
+        const divergentes = results.filter((r) => r.status === 'DIVERGENTE').length;
+        const naoLocalizados = results.filter(
+          (r) => r.status === 'ARQUIVO_NAO_LOCALIZADO' || r.status === 'AUSENTE'
+        ).length;
+
+        setValStatusMessage(
+          `Conferência concluída: ${correspondentes} íntegro(s), ${divergentes} divergente(s), ${naoLocalizados} não localizado(s).`
+        );
+
+        auditLogger.addLog({
+          operation: 'MANIFESTO_VALIDADO',
+          status: divergentes > 0 ? 'DIVERGENTE' : 'SUCESSO',
+          message: `Conferência de manifesto [${detectedManifest.formatLabel}]: ${correspondentes} correspondentes, ${divergentes} divergentes.`,
+          filesCount: results.length,
+        });
+      }
     } catch (err: unknown) {
       if ((err as Error)?.name === 'AbortError') {
-        setStatusMessage('Validação de manifesto cancelada.');
+        setValStatusMessage('Conferência de manifesto cancelada.');
       } else {
-        setStatusMessage(
+        setValStatusMessage(
           err instanceof Error ? `Erro: ${err.message}` : 'Erro na conferência do manifesto.'
         );
       }
     } finally {
-      setIsValidating(false);
-      abortValRef.current = null;
+      if (currentOp === valOpSeqRef.current) {
+        setIsValidating(false);
+        abortValRef.current = null;
+      }
     }
   };
 
-  // Filter items in validation mode
-  const filteredValidation = verificationResults.filter((item) => {
-    const matchFilter = statusFilter === 'ALL' || item.status === statusFilter;
-    const matchSearch =
-      !manifestSearch ||
-      item.fileName.toLowerCase().includes(manifestSearch.toLowerCase()) ||
-      item.relativePath.toLowerCase().includes(manifestSearch.toLowerCase()) ||
-      (item.expectedHash && item.expectedHash.toLowerCase().includes(manifestSearch.toLowerCase())) ||
-      (item.calculatedHash && item.calculatedHash.toLowerCase().includes(manifestSearch.toLowerCase()));
-    return matchFilter && matchSearch;
-  });
+  // Ambiguity resolution helper
+  const handleResolveAmbiguity = (itemId: string, candidateIndex: number) => {
+    setAmbiguityResolutions((prev) => ({
+      ...prev,
+      [itemId]: candidateIndex,
+    }));
+  };
 
-  const countCorrespondente = verificationResults.filter((i) => i.status === 'CORRESPONDENTE').length;
-  const countDivergente = verificationResults.filter((i) => i.status === 'DIVERGENTE').length;
-  const countAusente = verificationResults.filter((i) => i.status === 'AUSENTE').length;
-  const countAdicional = verificationResults.filter((i) => i.status === 'ADICIONAL').length;
+  // ----------------------------------------------------
+  // FILTERING & STATS FOR VALIDATION RESULTS
+  // ----------------------------------------------------
+  const filteredValidation = useMemo(() => {
+    return verificationResults.filter((item) => {
+      const matchFilter = statusFilter === 'ALL' || item.status === statusFilter;
+      const matchSearch =
+        !manifestSearch.trim() ||
+        item.fileName.toLowerCase().includes(manifestSearch.toLowerCase()) ||
+        item.relativePath.toLowerCase().includes(manifestSearch.toLowerCase()) ||
+        (item.expectedHash && item.expectedHash.toLowerCase().includes(manifestSearch.toLowerCase())) ||
+        (item.calculatedHash && item.calculatedHash.toLowerCase().includes(manifestSearch.toLowerCase()));
+      return matchFilter && matchSearch;
+    });
+  }, [verificationResults, statusFilter, manifestSearch]);
+
+  const stats = useMemo(() => {
+    const total = verificationResults.length;
+    const correspondente = verificationResults.filter((i) => i.status === 'CORRESPONDENTE').length;
+    const divergente = verificationResults.filter((i) => i.status === 'DIVERGENTE').length;
+    const naoLocalizado = verificationResults.filter(
+      (i) => i.status === 'ARQUIVO_NAO_LOCALIZADO' || i.status === 'AUSENTE'
+    ).length;
+    const ambiguo = verificationResults.filter((i) => i.status === 'ASSOCIACAO_AMBIGUA').length;
+    const erro = verificationResults.filter((i) => i.status === 'ERRO_LEITURA').length;
+    const invalido = verificationResults.filter((i) => i.status === 'REGISTRO_INVALIDO').length;
+    const adicional = verificationResults.filter((i) => i.status === 'ADICIONAL').length;
+    const naoVerificado = verificationResults.filter((i) => i.status === 'NAO_VERIFICADO').length;
+
+    const isFullyVerified =
+      total > 0 &&
+      divergente === 0 &&
+      naoLocalizado === 0 &&
+      ambiguo === 0 &&
+      erro === 0 &&
+      invalido === 0 &&
+      correspondente > 0;
+
+    return {
+      total,
+      correspondente,
+      divergente,
+      naoLocalizado,
+      ambiguo,
+      erro,
+      invalido,
+      adicional,
+      naoVerificado,
+      isFullyVerified,
+    };
+  }, [verificationResults]);
+
+  // Export validation reports
+  const handleExportValidationPDF = () => {
+    if (verificationResults.length === 0) return;
+    const { formatted, tz } = formatForensicDate();
+
+    let manifestOrigin = detectedManifest?.formatLabel || 'Manifesto de Integridade';
+    if (detectedManifest?.format === 'EXACTFILE' && detectedManifest.exactFileMeta?.version) {
+      manifestOrigin = `ExactFile ${detectedManifest.exactFileMeta.version}`;
+    }
+
+    const reportData: ManifestValidationReportData = {
+      id: generateLocalVerificationId(),
+      manifestOrigin,
+      manifestName: selectedManifestFileName || 'Manifesto_Carregado.txt',
+      declaredDate: detectedManifest?.exactFileMeta?.declaredDate,
+      validationTimestamp: formatted,
+      timezone: tz,
+      algorithm: detectedManifest?.algorithms.join(', ') || 'SHA-256',
+      totalItems: stats.total,
+      correspondentes: stats.correspondente,
+      divergentes: stats.divergente,
+      naoLocalizados: stats.naoLocalizado,
+      ambiguos: stats.ambiguo,
+      erros: stats.erro,
+      naoVerificados: stats.naoVerificado,
+      items: verificationResults,
+    };
+
+    exportManifestValidationPDF(reportData);
+  };
+
+  const handleExportValidationCSV = () => {
+    if (verificationResults.length === 0) return;
+    const { formatted, tz } = formatForensicDate();
+
+    const reportData: ManifestValidationReportData = {
+      id: generateLocalVerificationId(),
+      manifestOrigin: detectedManifest?.formatLabel || 'Manifesto de Integridade',
+      manifestName: selectedManifestFileName || 'Manifesto_Carregado.txt',
+      validationTimestamp: formatted,
+      timezone: tz,
+      algorithm: detectedManifest?.algorithms.join(', ') || 'SHA-256',
+      totalItems: stats.total,
+      correspondentes: stats.correspondente,
+      divergentes: stats.divergente,
+      naoLocalizados: stats.naoLocalizado,
+      ambiguos: stats.ambiguo,
+      erros: stats.erro,
+      naoVerificados: stats.naoVerificado,
+      items: verificationResults,
+    };
+
+    const csv = exportManifestValidationCSV(reportData);
+    downloadTextFile(csv, `Resultado_Validacao_Manifesto_${Date.now()}.csv`, 'text/csv;charset=utf-8');
+  };
+
+  const handleExportValidationTXT = () => {
+    if (verificationResults.length === 0) return;
+    const { formatted, tz } = formatForensicDate();
+
+    const reportData: ManifestValidationReportData = {
+      id: generateLocalVerificationId(),
+      manifestOrigin: detectedManifest?.formatLabel || 'Manifesto de Integridade',
+      manifestName: selectedManifestFileName || 'Manifesto_Carregado.txt',
+      declaredDate: detectedManifest?.exactFileMeta?.declaredDate,
+      validationTimestamp: formatted,
+      timezone: tz,
+      algorithm: detectedManifest?.algorithms.join(', ') || 'SHA-256',
+      totalItems: stats.total,
+      correspondentes: stats.correspondente,
+      divergentes: stats.divergente,
+      naoLocalizados: stats.naoLocalizado,
+      ambiguos: stats.ambiguo,
+      erros: stats.erro,
+      naoVerificados: stats.naoVerificado,
+      items: verificationResults,
+    };
+
+    const txt = exportManifestValidationTXT(reportData);
+    downloadTextFile(txt, `Resultado_Validacao_Manifesto_${Date.now()}.txt`);
+  };
 
   return (
-    <div className="w-full max-w-6xl mx-auto space-y-6">
-      {/* Header */}
+    <div className="w-full max-w-6xl mx-auto space-y-6 animate-fade-in">
+      {/* Module Header */}
       <div className="border-b border-[#262930] pb-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold text-white flex items-center gap-2.5">
+          <h1 className="text-xl font-bold text-white flex items-center gap-2.5 font-mono">
             <FileCheck2 className="w-6 h-6 text-[#F57917]" />
-            Manifesto de Integridade da Extração
+            MANIFESTO DE INTEGRIDADE DA EXTRAÇÃO
           </h1>
-          <p className="text-xs text-zinc-400 mt-1">
-            Gere ou valide manifestos de integridade criptográfica SHA-256 para extrações forenses completas.
-            Distingue arquivos internos, detecta arquivos ausentes ou inserções adicionais.
+          <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+            Gere manifestos ou valide a integridade contra manifestos existentes (incluindo o formato de checksums do <strong>ExactFile</strong>, GNU coreutils sha256sum e CSVs periciais).
           </p>
         </div>
 
@@ -425,7 +778,7 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
             onClick={() => setActiveSubMode('GERAR')}
             className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
               activeSubMode === 'GERAR'
-                ? 'bg-[#F57917] text-white shadow-sm'
+                ? 'bg-[#F57917] text-zinc-950 font-bold shadow-sm'
                 : 'text-zinc-400 hover:text-white'
             }`}
           >
@@ -436,7 +789,7 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
             onClick={() => setActiveSubMode('VALIDAR')}
             className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
               activeSubMode === 'VALIDAR'
-                ? 'bg-[#F57917] text-white shadow-sm'
+                ? 'bg-[#F57917] text-zinc-950 font-bold shadow-sm'
                 : 'text-zinc-400 hover:text-white'
             }`}
           >
@@ -445,30 +798,32 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
         </div>
       </div>
 
-      {statusMessage && (
+      {/* Global Status Banner */}
+      {(genStatusMessage || valStatusMessage) && (
         <div className="p-3.5 rounded-xl bg-[#17191D] border border-[#262930] text-xs text-zinc-300 flex items-center gap-2">
           <HelpCircle className="w-4 h-4 text-[#F57917] shrink-0" />
-          <span>{statusMessage}</span>
+          <span>{activeSubMode === 'GERAR' ? genStatusMessage : valStatusMessage}</span>
         </div>
       )}
 
-      {/* --------------------------------------------------------------------- */}
-      {/* MODE 1: GERAR NOVO MANIFESTO */}
-      {/* --------------------------------------------------------------------- */}
+      {/* ===================================================================== */}
+      {/* SUB-MODE 1: GERAR NOVO MANIFESTO                                      */}
+      {/* ===================================================================== */}
       {activeSubMode === 'GERAR' && (
         <div className="space-y-5 animate-fade-in">
           <div className="p-5 rounded-2xl bg-[#0F1115] border border-[#262930] space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <span className="text-xs font-mono font-bold uppercase text-zinc-300 block">
-                  Adicionar Evidências ou Diretório da Extração
+                  Adicionar Evidências ou Pasta da Extração
                 </span>
                 <span className="text-[11px] text-zinc-500">
-                  Calcula SHA-256 determinístico de cada arquivo preservando os caminhos relativos.
+                  Calcula hashes determinísticos de cada arquivo preservando a hierarquia de caminhos relativos.
                 </span>
               </div>
 
-              <div className="flex items-center gap-2">
+              {/* Action Buttons with LIMPAR SELEÇÃO and LIMPAR TUDO */}
+              <div className="flex flex-wrap items-center gap-2">
                 <input
                   ref={genFileInputRef}
                   type="file"
@@ -482,13 +837,13 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
                   className="py-2 px-3.5 rounded-lg bg-[#17191D] hover:bg-[#262930] border border-[#262930] text-zinc-200 text-xs font-semibold flex items-center gap-2 cursor-pointer"
                 >
                   <Upload className="w-3.5 h-3.5 text-[#F57917]" />
-                  Arquivos
+                  <span>Selecionar Arquivos</span>
                 </button>
 
                 <input
                   ref={genFolderInputRef}
                   type="file"
-                  // @ts-expect-error webkitdirectory is standard
+                  // @ts-expect-error webkitdirectory is standard in Chromium/Firefox/Safari
                   webkitdirectory=""
                   directory=""
                   multiple
@@ -501,36 +856,55 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
                   className="py-2 px-3.5 rounded-lg bg-[#17191D] hover:bg-[#262930] border border-[#262930] text-zinc-200 text-xs font-semibold flex items-center gap-2 cursor-pointer"
                 >
                   <FolderOpen className="w-3.5 h-3.5 text-[#F57917]" />
-                  Pasta Inteira
+                  <span>Selecionar Pasta</span>
                 </button>
 
-                {generationFiles.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setGenerationFiles([]);
-                      setManifestItems([]);
-                      setStatusMessage(null);
-                    }}
-                    className="text-xs text-zinc-500 hover:text-red-400 px-2"
-                  >
-                    Limpar
-                  </button>
-                )}
+                {/* 1. LIMPAR SELEÇÃO */}
+                <button
+                  type="button"
+                  onClick={handleClearGenSelection}
+                  disabled={generationFiles.length === 0 && manifestItems.length === 0}
+                  className="py-2 px-3 rounded-lg bg-[#17191D] hover:bg-[#20242B] border border-[#262930] text-zinc-300 text-xs font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
+                  title="Limpar arquivos e resultados da operação atual"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 text-[#F57917]" />
+                  <span>LIMPAR SELEÇÃO</span>
+                </button>
+
+                {/* 2. LIMPAR TUDO */}
+                <button
+                  type="button"
+                  onClick={() => setConfirmClearGenAllOpen(true)}
+                  className="py-2 px-3 rounded-lg bg-red-950/40 hover:bg-red-900/60 border border-red-900/40 text-red-300 text-xs font-medium flex items-center gap-1.5 cursor-pointer"
+                  title="Limpar toda a sessão do módulo Gerar Manifesto"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>LIMPAR TUDO</span>
+                </button>
               </div>
             </div>
 
+            {/* Optional Manifest Notes */}
+            <div className="pt-2 border-t border-[#262930]">
+              <label className="block text-[11px] text-zinc-400 mb-1 font-mono">
+                Notas Técnicas / Observações da Extração (Opcional):
+              </label>
+              <input
+                type="text"
+                value={manifestNotes}
+                onChange={(e) => setManifestNotes(e.target.value)}
+                placeholder="Ex: Extração física Cellebrite UFED - Dispositivo apreendido na Operação..."
+                className="w-full px-3 py-2 rounded-lg bg-[#17191D] border border-[#262930] text-xs text-white placeholder:text-zinc-600 focus:outline-none focus:border-[#F57917]"
+              />
+            </div>
+
+            {/* Files Summary & Generation Button */}
             {generationFiles.length > 0 && (
-              <div className="pt-2 border-t border-[#262930] space-y-3">
+              <div className="pt-3 border-t border-[#262930] space-y-3">
                 <div className="flex items-center justify-between text-xs text-zinc-400">
-                  <span>{generationFiles.length} arquivo(s) selecionado(s)</span>
+                  <span>{generationFiles.length} arquivo(s) selecionado(s) para catalogação</span>
                   <span className="font-mono">
-                    Total aprox:{' '}
-                    {(
-                      generationFiles.reduce((acc, f) => acc + f.size, 0) /
-                      (1024 * 1024)
-                    ).toFixed(2)}{' '}
-                    MB
+                    Volume total: {formatBytes(generationFiles.reduce((acc, f) => acc + f.size, 0))}
                   </span>
                 </div>
 
@@ -539,7 +913,7 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
                     <div className="flex items-center justify-between text-xs font-mono">
                       <span className="text-zinc-300 flex items-center gap-2">
                         <RefreshCw className="w-3.5 h-3.5 text-[#F57917] animate-spin" />
-                        Calculando manifesto ({currentFileIdx + 1}/{generationFiles.length}):{' '}
+                        Calculando hashes ({currentFileIdx + 1}/{generationFiles.length}):{' '}
                         <strong className="text-white truncate max-w-xs">
                           {generationFiles[currentFileIdx]?.name}
                         </strong>
@@ -556,9 +930,9 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
                       <button
                         type="button"
                         onClick={() => abortGenRef.current?.abort()}
-                        className="text-xs text-red-400 hover:underline"
+                        className="text-xs text-red-400 hover:underline cursor-pointer"
                       >
-                        Cancelar
+                        Interromper Cálculo
                       </button>
                     </div>
                   </div>
@@ -566,7 +940,7 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
                   <button
                     type="button"
                     onClick={handleStartGeneration}
-                    className="w-full py-3 px-6 rounded-xl bg-[#F57917] hover:bg-[#FF9A35] text-white text-xs font-bold tracking-wider flex items-center justify-center gap-2 cursor-pointer shadow-md transition-colors"
+                    className="w-full py-3.5 px-6 rounded-xl bg-[#F57917] hover:bg-[#FF9A35] text-zinc-950 text-xs font-bold tracking-wider flex items-center justify-center gap-2 cursor-pointer shadow-md transition-colors"
                   >
                     <FileCheck2 className="w-4 h-4" />
                     CALCULAR E GERAR MANIFESTO SHA-256
@@ -579,10 +953,10 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
           {/* Generated Manifest Table */}
           {manifestItems.length > 0 && (
             <div className="space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-2 text-xs font-mono font-bold text-white uppercase">
                   <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  Manifesto Gerado ({manifestItems.length} arquivos)
+                  <span>Manifesto Gerado ({manifestItems.length} arquivos catalogados)</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -591,7 +965,7 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
                     className="py-1.5 px-3 rounded-lg bg-[#17191D] hover:bg-[#262930] border border-[#262930] text-zinc-300 text-xs font-medium flex items-center gap-1.5 cursor-pointer"
                   >
                     <Download className="w-3.5 h-3.5 text-[#F57917]" />
-                    Exportar TXT
+                    <span>Exportar TXT</span>
                   </button>
                   <button
                     type="button"
@@ -599,7 +973,7 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
                     className="py-1.5 px-3 rounded-lg bg-[#17191D] hover:bg-[#262930] border border-[#262930] text-zinc-300 text-xs font-medium flex items-center gap-1.5 cursor-pointer"
                   >
                     <Download className="w-3.5 h-3.5 text-[#F57917]" />
-                    Exportar CSV
+                    <span>Exportar CSV</span>
                   </button>
                 </div>
               </div>
@@ -609,7 +983,7 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
                   <table className="w-full text-left text-xs border-collapse">
                     <thead className="sticky top-0 bg-[#17191D] border-b border-[#262930] text-zinc-400 font-mono text-[11px] uppercase">
                       <tr>
-                        <th className="py-2.5 px-4 font-semibold">Caminho / Arquivo</th>
+                        <th className="py-2.5 px-4 font-semibold">Caminho Relativo / Arquivo</th>
                         <th className="py-2.5 px-3 font-semibold">Tamanho</th>
                         <th className="py-2.5 px-4 font-semibold">Hash SHA-256</th>
                       </tr>
@@ -618,7 +992,7 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
                       {manifestItems.map((item) => (
                         <tr key={item.id} className="hover:bg-[#17191D]/60 transition-colors">
                           <td className="py-2.5 px-4">
-                            <span className="font-medium text-white truncate block max-w-sm">
+                            <span className="font-medium text-white truncate block max-w-sm" title={item.relativePath}>
                               {item.relativePath}
                             </span>
                           </td>
@@ -639,105 +1013,209 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
         </div>
       )}
 
-      {/* --------------------------------------------------------------------- */}
-      {/* MODE 2: VALIDAR MANIFESTO EXISTENTE */}
-      {/* --------------------------------------------------------------------- */}
+      {/* ===================================================================== */}
+      {/* SUB-MODE 2: VALIDAR MANIFESTO EXISTENTE                               */}
+      {/* ===================================================================== */}
       {activeSubMode === 'VALIDAR' && (
         <div className="space-y-5 animate-fade-in">
+          {/* Top Control Bar with Clear Buttons */}
+          <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl bg-[#0F1115] border border-[#262930]">
+            <div className="flex items-center gap-2">
+              <FileSearch className="w-4 h-4 text-[#F57917]" />
+              <span className="text-xs font-mono font-bold text-white uppercase">
+                Validação de Integridade de Manifesto
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {/* LIMPAR SELEÇÃO (VALIDAR MANIFESTO) */}
+              <button
+                type="button"
+                onClick={handleClearValSelection}
+                disabled={verificationFiles.length === 0 && verificationResults.length === 0}
+                className="py-1.5 px-3 rounded-lg bg-[#17191D] hover:bg-[#20242B] border border-[#262930] text-zinc-300 text-xs font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
+                title="Remove arquivos e resultados, mantendo o manifesto importado"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-[#F57917]" />
+                <span>LIMPAR SELEÇÃO</span>
+              </button>
+
+              {/* LIMPAR TUDO (VALIDAR MANIFESTO) */}
+              <button
+                type="button"
+                onClick={() => setConfirmClearValAllOpen(true)}
+                className="py-1.5 px-3 rounded-lg bg-red-950/40 hover:bg-red-900/60 border border-red-900/40 text-red-300 text-xs font-medium flex items-center gap-1.5 cursor-pointer"
+                title="Limpar toda a sessão de validação incluindo o manifesto importado"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>LIMPAR TUDO</span>
+              </button>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Step A: Upload or Paste Manifest */}
+            {/* Step 1: Upload or Paste Manifest */}
             <div className="p-4 rounded-xl bg-[#0F1115] border border-[#262930] space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-mono font-bold uppercase text-zinc-300">
-                  Passo 1: Manifesto Original
+                  Passo 1: Manifesto de Referência
                 </span>
                 <input
                   ref={manifestFileInputRef}
                   type="file"
-                  accept=".txt,.csv"
+                  accept=".txt,.csv,.json"
                   className="hidden"
                   onChange={handleManifestUpload}
                 />
                 <button
                   type="button"
                   onClick={() => manifestFileInputRef.current?.click()}
-                  className="text-xs text-[#F57917] hover:underline flex items-center gap-1 cursor-pointer"
+                  className="text-xs text-[#F57917] hover:underline flex items-center gap-1 cursor-pointer font-medium"
                 >
                   <Upload className="w-3.5 h-3.5" />
-                  Carregar Arquivo (.txt / .csv)
+                  <span>Carregar Arquivo (.txt / .csv / .json)</span>
                 </button>
               </div>
 
               <textarea
-                rows={4}
+                rows={5}
                 value={importedManifestText}
-                onChange={(e) => setImportedManifestText(e.target.value)}
-                placeholder="Cole aqui o texto do manifesto original (linhas no formato 'HASH  *CAMINHO' ou CSV)..."
+                onChange={(e) => {
+                  setImportedManifestText(e.target.value);
+                  setSelectedManifestFileName('');
+                }}
+                placeholder="Cole o conteúdo do manifesto (ex: ExactFile, sha256sum ou CSV)..."
                 className="w-full p-2.5 rounded-lg bg-[#17191D] border border-[#262930] text-xs font-mono text-white placeholder:text-zinc-600 focus:outline-none focus:border-[#F57917] resize-none"
               />
+
+              {/* ExactFile & Manifest Format Detected Badge */}
+              {detectedManifest && (
+                <div className="p-3 rounded-xl bg-[#17191D] border border-[#262930] space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-[#F57917]/20 border border-[#F57917]/40 text-[#F57917]">
+                      FORMATO IDENTIFICADO: {detectedManifest.formatLabel.toUpperCase()}
+                    </span>
+
+                    <span className="text-[11px] font-mono text-zinc-400">
+                      {detectedManifest.validCount} registro(s) reconhecido(s)
+                    </span>
+                  </div>
+
+                  {/* ExactFile Detailed Metadata */}
+                  {detectedManifest.format === 'EXACTFILE' && detectedManifest.exactFileMeta && (
+                    <div className="pt-2 border-t border-[#262930] grid grid-cols-2 gap-2 text-[11px] text-zinc-300 font-sans">
+                      {detectedManifest.exactFileMeta.version && (
+                        <div>
+                          <span className="text-zinc-500 block text-[10px]">Versão ExactFile:</span>
+                          <strong>{detectedManifest.exactFileMeta.version}</strong>
+                        </div>
+                      )}
+                      {detectedManifest.exactFileMeta.declaredDate && (
+                        <div>
+                          <span className="text-zinc-500 block text-[10px]">Data Declarada:</span>
+                          <strong>{detectedManifest.exactFileMeta.declaredDate}</strong>
+                        </div>
+                      )}
+                      <div>
+                        <span className="text-zinc-500 block text-[10px]">Qtd Declarada no Rodapé:</span>
+                        <strong>{detectedManifest.exactFileMeta.declaredCount ?? 'Não informada'}</strong>
+                      </div>
+                      <div>
+                        <span className="text-zinc-500 block text-[10px]">Algoritmos Identificados:</span>
+                        <strong className="text-[#F57917]">{detectedManifest.algorithms.join(', ')}</strong>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Warning if declared count mismatches recognized count */}
+                  {detectedManifest.exactFileMeta?.countMismatchWarning && (
+                    <div className="p-2.5 rounded-lg bg-amber-950/40 border border-amber-800 text-amber-300 text-xs flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
+                      <span>{detectedManifest.exactFileMeta.countMismatchWarning}</span>
+                    </div>
+                  )}
+
+                  {/* Error notifications */}
+                  {detectedManifest.parseErrors.length > 0 && (
+                    <div className="p-2.5 rounded-lg bg-red-950/40 border border-red-800 text-red-300 text-xs space-y-1">
+                      <div className="flex items-center gap-1.5 font-bold">
+                        <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+                        <span>Avisos de interpretação ({detectedManifest.parseErrors.length} linha(s)):</span>
+                      </div>
+                      <ul className="list-disc list-inside text-[10px] space-y-0.5">
+                        {detectedManifest.parseErrors.slice(0, 3).map((err, i) => (
+                          <li key={i}>
+                            Linha {err.line}: {err.message}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
-            {/* Step B: Select Current Local Files */}
-            <div className="p-4 rounded-xl bg-[#0F1115] border border-[#262930] space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-mono font-bold uppercase text-zinc-300">
-                  Passo 2: Evidência Atual (Arquivos / Pasta)
-                </span>
-                {verificationFiles.length > 0 && (
-                  <span className="text-xs text-zinc-500 font-mono">
-                    {verificationFiles.length} item(ns)
+            {/* Step 2: Select Current Local Files or Entire Folder */}
+            <div className="p-4 rounded-xl bg-[#0F1115] border border-[#262930] space-y-3 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-mono font-bold uppercase text-zinc-300">
+                    Passo 2: Evidência Atual (Arquivos / Pasta)
                   </span>
-                )}
-              </div>
+                  {verificationFiles.length > 0 && (
+                    <span className="text-xs text-[#F57917] font-mono font-bold">
+                      {verificationFiles.length} item(ns) selecionado(s)
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-zinc-400 leading-relaxed mb-4">
+                  Selecione os arquivos correspondentes ou selecione a pasta raiz da extração para varredura recursiva de subpastas.
+                </p>
 
-              <div className="flex items-center gap-2">
-                <input
-                  ref={valFileInputRef}
-                  type="file"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => {
-                    if (e.target.files) {
-                      setVerificationFiles(Array.from(e.target.files));
-                    }
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={() => valFileInputRef.current?.click()}
-                  className="flex-1 py-3 px-3 rounded-xl bg-[#17191D] hover:bg-[#262930] border border-[#262930] text-xs font-medium text-white flex flex-col items-center gap-1.5 cursor-pointer"
-                >
-                  <Upload className="w-4 h-4 text-[#F57917]" />
-                  Selecionar Arquivos
-                </button>
+                <div className="flex flex-col sm:flex-row items-center gap-2">
+                  <input
+                    ref={valFileInputRef}
+                    type="file"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => handleValFilesAdded(e.target.files)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => valFileInputRef.current?.click()}
+                    className="w-full py-3 px-3 rounded-xl bg-[#17191D] hover:bg-[#262930] border border-[#262930] text-xs font-semibold text-white flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                  >
+                    <Upload className="w-4 h-4 text-[#F57917]" />
+                    <span>Selecionar Arquivos</span>
+                  </button>
 
-                <input
-                  ref={valFolderInputRef}
-                  type="file"
-                  // @ts-expect-error webkitdirectory is standard
-                  webkitdirectory=""
-                  directory=""
-                  multiple
-                  className="hidden"
-                  onChange={(e) => {
-                    if (e.target.files) {
-                      setVerificationFiles(Array.from(e.target.files));
-                    }
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={() => valFolderInputRef.current?.click()}
-                  className="flex-1 py-3 px-3 rounded-xl bg-[#17191D] hover:bg-[#262930] border border-[#262930] text-xs font-medium text-white flex flex-col items-center gap-1.5 cursor-pointer"
-                >
-                  <FolderOpen className="w-4 h-4 text-[#F57917]" />
-                  Selecionar Pasta Atual
-                </button>
+                  <input
+                    ref={valFolderInputRef}
+                    type="file"
+                    // @ts-expect-error webkitdirectory is standard
+                    webkitdirectory=""
+                    directory=""
+                    multiple
+                    className="hidden"
+                    onChange={(e) => handleValFilesAdded(e.target.files)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => valFolderInputRef.current?.click()}
+                    className="w-full py-3 px-3 rounded-xl bg-[#17191D] hover:bg-[#262930] border border-[#262930] text-xs font-semibold text-white flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                  >
+                    <FolderOpen className="w-4 h-4 text-[#F57917]" />
+                    <span>Selecionar Pasta Atual</span>
+                  </button>
+                </div>
               </div>
 
               {verificationFiles.length > 0 && (
-                <div className="text-[11px] text-zinc-400">
-                  Pronto para comparar {verificationFiles.length} arquivos locais com o manifesto.
+                <div className="p-3 rounded-xl bg-[#17191D] border border-[#262930] text-xs text-zinc-300 flex items-center justify-between">
+                  <span>Pronto para comparar {verificationFiles.length} arquivos locais com o manifesto.</span>
+                  <span className="font-mono text-zinc-400">
+                    {formatShortBytes(verificationFiles.reduce((acc, f) => acc + f.size, 0))}
+                  </span>
                 </div>
               )}
             </div>
@@ -764,9 +1242,9 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
                   <button
                     type="button"
                     onClick={() => abortValRef.current?.abort()}
-                    className="text-xs text-red-400 hover:underline"
+                    className="text-xs text-red-400 hover:underline cursor-pointer"
                   >
-                    Interromper
+                    Interromper Conferência
                   </button>
                 </div>
               </div>
@@ -774,11 +1252,11 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
               <button
                 type="button"
                 onClick={handleStartValidation}
-                disabled={!importedManifestText.trim() || verificationFiles.length === 0}
-                className="w-full py-3.5 px-6 rounded-xl bg-[#F57917] hover:bg-[#FF9A35] disabled:bg-[#262930] disabled:text-zinc-600 text-white font-bold text-xs tracking-wider flex items-center justify-center gap-2 cursor-pointer shadow-md transition-colors"
+                disabled={!detectedManifest || detectedManifest.records.length === 0 || verificationFiles.length === 0}
+                className="w-full py-3.5 px-6 rounded-xl bg-[#F57917] hover:bg-[#FF9A35] disabled:bg-[#262930] disabled:text-zinc-600 text-zinc-950 font-bold text-xs tracking-wider flex items-center justify-center gap-2 cursor-pointer shadow-md transition-colors"
               >
                 <ShieldCheck className="w-4 h-4" />
-                CONFERIR E VALIDAR CONTRA O MANIFESTO
+                <span>CONFERIR E VALIDAR CONTRA O MANIFESTO</span>
               </button>
             )}
           </div>
@@ -786,42 +1264,117 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
           {/* Verification Results Dashboard */}
           {verificationResults.length > 0 && (
             <div className="space-y-4">
-              {/* Score KPI strip */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="p-3.5 rounded-xl bg-[#0F1115] border border-emerald-950/60">
-                  <span className="text-[11px] font-mono text-emerald-500 block uppercase">
+              {/* Summary Strip (Requirement 8) */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+                <div className="p-3 rounded-xl bg-[#0F1115] border border-emerald-950/60">
+                  <span className="text-[10px] font-mono text-emerald-500 block uppercase">
                     Correspondentes
                   </span>
-                  <span className="text-xl font-bold font-mono text-emerald-400 tabular-nums">
-                    {countCorrespondente}
+                  <span className="text-lg font-bold font-mono text-emerald-400 tabular-nums">
+                    {stats.correspondente}
                   </span>
                 </div>
 
-                <div className="p-3.5 rounded-xl bg-[#0F1115] border border-red-950/60">
-                  <span className="text-[11px] font-mono text-red-500 block uppercase">
-                    Divergentes (Modificados)
+                <div className="p-3 rounded-xl bg-[#0F1115] border border-red-950/60">
+                  <span className="text-[10px] font-mono text-red-500 block uppercase">
+                    Divergentes
                   </span>
-                  <span className="text-xl font-bold font-mono text-red-400 tabular-nums">
-                    {countDivergente}
-                  </span>
-                </div>
-
-                <div className="p-3.5 rounded-xl bg-[#0F1115] border border-yellow-950/60">
-                  <span className="text-[11px] font-mono text-yellow-500 block uppercase">
-                    Ausentes (Faltantes)
-                  </span>
-                  <span className="text-xl font-bold font-mono text-yellow-400 tabular-nums">
-                    {countAusente}
+                  <span className="text-lg font-bold font-mono text-red-400 tabular-nums">
+                    {stats.divergente}
                   </span>
                 </div>
 
-                <div className="p-3.5 rounded-xl bg-[#0F1115] border border-purple-950/60">
-                  <span className="text-[11px] font-mono text-purple-400 block uppercase">
-                    Adicionais (Não Listados)
+                <div className="p-3 rounded-xl bg-[#0F1115] border border-amber-950/60">
+                  <span className="text-[10px] font-mono text-amber-500 block uppercase">
+                    Não Localizados
                   </span>
-                  <span className="text-xl font-bold font-mono text-purple-300 tabular-nums">
-                    {countAdicional}
+                  <span className="text-lg font-bold font-mono text-amber-400 tabular-nums">
+                    {stats.naoLocalizado}
                   </span>
+                </div>
+
+                <div className="p-3 rounded-xl bg-[#0F1115] border border-purple-950/60">
+                  <span className="text-[10px] font-mono text-purple-400 block uppercase">
+                    Ambíguos
+                  </span>
+                  <span className="text-lg font-bold font-mono text-purple-300 tabular-nums">
+                    {stats.ambiguo}
+                  </span>
+                </div>
+
+                <div className="p-3 rounded-xl bg-[#0F1115] border border-red-950/60">
+                  <span className="text-[10px] font-mono text-red-400 block uppercase">
+                    Erros Leitura
+                  </span>
+                  <span className="text-lg font-bold font-mono text-red-300 tabular-nums">
+                    {stats.erro}
+                  </span>
+                </div>
+
+                <div className="p-3 rounded-xl bg-[#0F1115] border border-[#262930]">
+                  <span className="text-[10px] font-mono text-zinc-400 block uppercase">
+                    Total Registros
+                  </span>
+                  <span className="text-lg font-bold font-mono text-white tabular-nums">
+                    {stats.total}
+                  </span>
+                </div>
+              </div>
+
+              {/* Status Alert Conclusion */}
+              <div
+                className={`p-4 rounded-xl border flex items-center justify-between gap-3 ${
+                  stats.isFullyVerified
+                    ? 'bg-emerald-950/40 border-emerald-800 text-emerald-300'
+                    : 'bg-amber-950/40 border-amber-800 text-amber-300'
+                }`}
+              >
+                <div className="flex items-center gap-2.5 text-xs">
+                  {stats.isFullyVerified ? (
+                    <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+                  ) : (
+                    <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
+                  )}
+                  <div>
+                    <strong className="block">
+                      {stats.isFullyVerified
+                        ? 'INTEGRIDADE INTEGRAL COMPROVADA'
+                        : 'CONFERÊNCIA COM IRREGULARIDADES'}
+                    </strong>
+                    <span className="text-[11px] text-zinc-300">
+                      {stats.isFullyVerified
+                        ? `Todos os ${stats.correspondente} arquivos apresentaram correspondência exata contra o manifesto.`
+                        : 'O manifesto não pode ser declarado integralmente validado enquanto houver arquivos divergentes, não localizados ou ambíguos.'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Export Buttons */}
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleExportValidationPDF}
+                    className="px-3 py-1.5 rounded-lg bg-[#F57917] hover:bg-[#FF9A35] text-zinc-950 text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Laudo PDF</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExportValidationTXT}
+                    className="px-2.5 py-1.5 rounded-lg bg-[#17191D] hover:bg-[#20242B] border border-[#262930] text-zinc-200 text-xs font-medium flex items-center gap-1 cursor-pointer"
+                  >
+                    <FileCode className="w-3.5 h-3.5 text-[#F57917]" />
+                    <span>TXT</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExportValidationCSV}
+                    className="px-2.5 py-1.5 rounded-lg bg-[#17191D] hover:bg-[#20242B] border border-[#262930] text-zinc-200 text-xs font-medium flex items-center gap-1 cursor-pointer"
+                  >
+                    <FileText className="w-3.5 h-3.5 text-zinc-300" />
+                    <span>CSV</span>
+                  </button>
                 </div>
               </div>
 
@@ -829,11 +1382,11 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-1.5 p-1 bg-[#17191D] rounded-lg border border-[#262930] overflow-x-auto max-w-full">
                   {[
-                    { id: 'ALL', label: 'Todos' },
-                    { id: 'CORRESPONDENTE', label: 'Correspondentes' },
-                    { id: 'DIVERGENTE', label: 'Divergentes' },
-                    { id: 'AUSENTE', label: 'Ausentes' },
-                    { id: 'ADICIONAL', label: 'Adicionais' },
+                    { id: 'ALL', label: `Todos (${verificationResults.length})` },
+                    { id: 'CORRESPONDENTE', label: `Correspondentes (${stats.correspondente})` },
+                    { id: 'DIVERGENTE', label: `Divergentes (${stats.divergente})` },
+                    { id: 'ARQUIVO_NAO_LOCALIZADO', label: `Não Localizados (${stats.naoLocalizado})` },
+                    { id: 'ASSOCIACAO_AMBIGUA', label: `Ambíguos (${stats.ambiguo})` },
                   ].map((tab) => (
                     <button
                       key={tab.id}
@@ -841,7 +1394,7 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
                       onClick={() => setStatusFilter(tab.id)}
                       className={`py-1 px-3 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer ${
                         statusFilter === tab.id
-                          ? 'bg-[#F57917] text-white shadow-sm'
+                          ? 'bg-[#F57917] text-zinc-950 font-bold shadow-sm'
                           : 'text-zinc-400 hover:text-white'
                       }`}
                     >
@@ -854,7 +1407,7 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
                   <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-zinc-500" />
                   <input
                     type="text"
-                    placeholder="Filtrar..."
+                    placeholder="Filtrar por nome, caminho ou hash..."
                     value={manifestSearch}
                     onChange={(e) => setManifestSearch(e.target.value)}
                     className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-[#17191D] border border-[#262930] text-xs text-white placeholder:text-zinc-600 focus:outline-none focus:border-[#F57917]"
@@ -862,70 +1415,119 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
                 </div>
               </div>
 
-              {/* Table */}
+              {/* Table of Results */}
               <div className="rounded-xl border border-[#262930] overflow-hidden bg-[#0F1115]">
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto max-h-[500px]">
                   <table className="w-full text-left text-xs border-collapse">
-                    <thead>
-                      <tr className="bg-[#17191D] border-b border-[#262930] text-zinc-400 font-mono text-[11px] uppercase">
-                        <th className="py-3 px-4 font-semibold">Caminho / Arquivo</th>
-                        <th className="py-3 px-4 font-semibold">Hash Original</th>
-                        <th className="py-3 px-4 font-semibold">Hash Atual</th>
-                        <th className="py-3 px-4 font-semibold text-right">Diagnóstico</th>
+                    <thead className="sticky top-0 bg-[#17191D] border-b border-[#262930] text-zinc-400 font-mono text-[11px] uppercase">
+                      <tr>
+                        <th className="py-2.5 px-3 w-10 text-center">#</th>
+                        <th className="py-2.5 px-3">Caminho / Nome do Arquivo</th>
+                        <th className="py-2.5 px-3">Hash Referência (Manifesto)</th>
+                        <th className="py-2.5 px-3">Hash Calculado Local</th>
+                        <th className="py-2.5 px-3 text-center w-32">Situação</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#262930]">
-                      {filteredValidation.map((item) => (
+                      {filteredValidation.map((item, idx) => (
                         <tr key={item.id} className="hover:bg-[#17191D]/60 transition-colors">
-                          <td className="py-3 px-4">
-                            <div className="font-medium text-white truncate max-w-xs">
+                          <td className="py-2.5 px-3 text-center font-mono text-zinc-500">
+                            {item.sequence || idx + 1}
+                          </td>
+
+                          <td className="py-2.5 px-3">
+                            <div className="font-medium text-white truncate max-w-sm" title={item.relativePath}>
                               {item.relativePath}
                             </div>
                             <div className="text-[10px] text-zinc-500">{item.notes}</div>
+
+                            {/* Ambiguity Resolution Selector */}
+                            {item.status === 'ASSOCIACAO_AMBIGUA' && item.candidateFiles && (
+                              <div className="mt-2 p-2 rounded-lg bg-[#17191D] border border-purple-800/60 space-y-1.5">
+                                <span className="text-[10px] text-purple-300 font-bold block">
+                                  Selecione o arquivo correto entre os candidatos encontrados:
+                                </span>
+                                <div className="space-y-1">
+                                  {item.candidateFiles.map((cand, candIdx) => (
+                                    <button
+                                      key={candIdx}
+                                      type="button"
+                                      onClick={() => handleResolveAmbiguity(String(item.sequence), candIdx)}
+                                      className="text-left w-full text-[10px] font-mono text-zinc-300 hover:text-white p-1 rounded hover:bg-[#20242B] flex items-center justify-between cursor-pointer"
+                                    >
+                                      <span className="truncate max-w-xs">
+                                        {(cand as any).webkitRelativePath || cand.name}
+                                      </span>
+                                      <span className="text-zinc-500">{formatShortBytes(cand.size)}</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                           </td>
 
-                          <td className="py-3 px-4 font-mono text-[11px] text-zinc-400">
+                          {/* Expected Hash */}
+                          <td className="py-2.5 px-3 font-mono text-[11px] text-zinc-400">
                             {item.expectedHash ? (
-                              <span className="truncate max-w-[140px] inline-block font-mono" title={item.expectedHash}>
-                                {item.expectedHash.substring(0, 16)}...{item.expectedHash.slice(-8)}
+                              <span className="truncate max-w-[200px] inline-block font-mono" title={item.expectedHash}>
+                                {item.expectedHash}
                               </span>
                             ) : (
                               <span className="text-zinc-600">—</span>
                             )}
                           </td>
 
-                          <td className="py-3 px-4 font-mono text-[11px] text-zinc-300">
+                          {/* Calculated Hash */}
+                          <td className="py-2.5 px-3 font-mono text-[11px] text-zinc-200">
                             {item.calculatedHash ? (
-                              <span className="truncate max-w-[140px] inline-block font-mono" title={item.calculatedHash}>
-                                {item.calculatedHash.substring(0, 16)}...{item.calculatedHash.slice(-8)}
+                              <span className="truncate max-w-[200px] inline-block font-mono" title={item.calculatedHash}>
+                                {item.calculatedHash}
                               </span>
                             ) : (
                               <span className="text-zinc-600">—</span>
                             )}
                           </td>
 
-                          <td className="py-3 px-4 text-right whitespace-nowrap">
+                          {/* Status Badge */}
+                          <td className="py-2.5 px-3 text-center whitespace-nowrap">
                             {item.status === 'CORRESPONDENTE' && (
-                              <span className="inline-flex items-center gap-1 text-emerald-400 font-bold font-mono text-[11px]">
-                                <CheckCircle2 className="w-3.5 h-3.5" />
-                                ÍNTEGRO
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-950/60 border border-emerald-800 text-emerald-400">
+                                <CheckCircle2 className="w-3 h-3" />
+                                CORRESPONDENTE
                               </span>
                             )}
                             {item.status === 'DIVERGENTE' && (
-                              <span className="inline-flex items-center gap-1 text-red-400 font-bold font-mono text-[11px]">
-                                <XCircle className="w-3.5 h-3.5" />
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-red-950/60 border border-red-800 text-red-400">
+                                <XCircle className="w-3 h-3" />
                                 DIVERGENTE
                               </span>
                             )}
-                            {item.status === 'AUSENTE' && (
-                              <span className="inline-flex items-center gap-1 text-yellow-400 font-medium font-mono text-[11px]">
-                                <AlertTriangle className="w-3.5 h-3.5" />
-                                AUSENTE
+                            {(item.status === 'ARQUIVO_NAO_LOCALIZADO' || item.status === 'AUSENTE') && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-950/60 border border-amber-800 text-amber-400">
+                                <AlertTriangle className="w-3 h-3" />
+                                NÃO LOCALIZADO
+                              </span>
+                            )}
+                            {item.status === 'ASSOCIACAO_AMBIGUA' && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-purple-950/60 border border-purple-800 text-purple-300">
+                                <AlertTriangle className="w-3 h-3" />
+                                AMBÍGUO
+                              </span>
+                            )}
+                            {item.status === 'ERRO_LEITURA' && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-red-950/60 border border-red-800 text-red-400">
+                                <XCircle className="w-3 h-3" />
+                                ERRO LEITURA
+                              </span>
+                            )}
+                            {item.status === 'REGISTRO_INVALIDO' && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-zinc-800 border border-zinc-700 text-zinc-400">
+                                INVÁLIDO
                               </span>
                             )}
                             {item.status === 'ADICIONAL' && (
-                              <span className="inline-flex items-center gap-1 text-purple-400 font-medium font-mono text-[11px]">
-                                <PlusCircle className="w-3.5 h-3.5" />
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-purple-950/60 border border-purple-800 text-purple-400">
+                                <PlusCircle className="w-3 h-3" />
                                 ADICIONAL
                               </span>
                             )}
@@ -938,6 +1540,75 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ===================================================================== */}
+      {/* CONFIRMATION MODALS                                                   */}
+      {/* ===================================================================== */}
+      {/* 1. Confirm Clear All - Generation */}
+      {confirmClearGenAllOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-md rounded-2xl bg-[#0F1115] border border-red-900/60 p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3 text-red-400">
+              <Trash2 className="w-6 h-6 shrink-0" />
+              <h3 className="text-sm font-bold text-white font-mono uppercase">
+                Limpar Tudo — Gerar Manifesto?
+              </h3>
+            </div>
+            <p className="text-xs text-zinc-300 leading-relaxed">
+              Deseja realmente limpar toda a sessão de geração de manifesto, incluindo os arquivos selecionados, hashes calculados e notas preenchidas? Arquivos do seu computador não serão afetados.
+            </p>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setConfirmClearGenAllOpen(false)}
+                className="px-4 py-2 rounded-lg bg-[#262930] text-zinc-300 text-xs cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmClearGenAll}
+                className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold text-xs cursor-pointer shadow"
+              >
+                Sim, Limpar Tudo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2. Confirm Clear All - Validation */}
+      {confirmClearValAllOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-md rounded-2xl bg-[#0F1115] border border-red-900/60 p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3 text-red-400">
+              <Trash2 className="w-6 h-6 shrink-0" />
+              <h3 className="text-sm font-bold text-white font-mono uppercase">
+                Limpar Tudo — Validar Manifesto?
+              </h3>
+            </div>
+            <p className="text-xs text-zinc-300 leading-relaxed">
+              Deseja realmente limpar toda a sessão de validação, incluindo o manifesto de referência carregado, os arquivos locais e os resultados da conferência?
+            </p>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setConfirmClearValAllOpen(false)}
+                className="px-4 py-2 rounded-lg bg-[#262930] text-zinc-300 text-xs cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmClearValAll}
+                className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold text-xs cursor-pointer shadow"
+              >
+                Sim, Limpar Tudo
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
