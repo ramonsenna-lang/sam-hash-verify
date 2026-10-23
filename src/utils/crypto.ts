@@ -147,30 +147,13 @@ export async function computeHashes(
   }
 
   let offset = 0;
-  const reader = new FileReader();
-
-  // Read slice helper wrapping FileReader in a Promise
-  const readSlice = (blob: Blob): Promise<ArrayBuffer> => {
-    return new Promise((resolve, reject) => {
-      reader.onload = () => {
-        if (reader.result instanceof ArrayBuffer) {
-          resolve(reader.result);
-        } else {
-          reject(new Error('Falha ao ler bloco do arquivo.'));
-        }
-      };
-      reader.onerror = () => reject(reader.error || new Error('Erro na leitura do arquivo.'));
-      reader.readAsArrayBuffer(blob);
-    });
-  };
-
   while (offset < totalSize) {
     if (abortSignal?.aborted) {
       throw new DOMException('Operação cancelada pelo usuário.', 'AbortError');
     }
 
     const chunkBlob = file.slice(offset, offset + CHUNK_SIZE);
-    const buffer = await readSlice(chunkBlob);
+    const buffer = await chunkBlob.arrayBuffer();
     const uint8View = new Uint8Array(buffer);
 
     for (const h of hashers) {
