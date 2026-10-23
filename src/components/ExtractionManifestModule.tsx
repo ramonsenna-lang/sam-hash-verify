@@ -21,6 +21,7 @@ import {
   AlertCircle,
   Check,
   FolderTree,
+  Layers,
 } from 'lucide-react';
 import {
   ExtractionManifestItem,
@@ -50,15 +51,30 @@ import {
   ParsedManifestRecord,
 } from '../utils/exactFileParser';
 import { auditLogger } from '../utils/auditLogger';
+import { BatchValidationModule } from './BatchValidationModule';
 
 interface ExtractionManifestModuleProps {
   onAddSessionRecord: (record: SingleValidationRecord) => void;
+  initialSubTab?: 'gerar' | 'validar' | 'lote';
 }
 
 export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> = ({
   onAddSessionRecord,
+  initialSubTab = 'gerar',
 }) => {
-  const [activeSubMode, setActiveSubMode] = useState<'GERAR' | 'VALIDAR'>('GERAR');
+  const [activeSubMode, setActiveSubMode] = useState<'GERAR' | 'VALIDAR' | 'LOTE'>(
+    initialSubTab === 'lote' ? 'LOTE' : initialSubTab === 'validar' ? 'VALIDAR' : 'GERAR'
+  );
+
+  useEffect(() => {
+    if (initialSubTab === 'lote') {
+      setActiveSubMode('LOTE');
+    } else if (initialSubTab === 'validar') {
+      setActiveSubMode('VALIDAR');
+    } else if (initialSubTab === 'gerar') {
+      setActiveSubMode('GERAR');
+    }
+  }, [initialSubTab]);
 
   // ----------------------------------------------------
   // SUB-MODE 1: GENERATE MANIFEST STATE
@@ -759,52 +775,70 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
 
   return (
     <div className="w-full max-w-6xl mx-auto space-y-6 animate-fade-in">
-      {/* Module Header */}
-      <div className="border-b border-[#262930] pb-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-bold text-white flex items-center gap-2.5 font-mono">
-            <FileCheck2 className="w-6 h-6 text-[#F57917]" />
-            MANIFESTO DE INTEGRIDADE DA EXTRAÇÃO
-          </h1>
-          <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
-            Gere manifestos ou valide a integridade contra manifestos existentes (incluindo o formato de checksums do <strong>ExactFile</strong>, GNU coreutils sha256sum e CSVs periciais).
-          </p>
-        </div>
+      {/* Sub-tab Switcher: Gerar Manifesto | Validar Manifesto | Validação em Lote */}
+      <div className="flex items-center gap-2 p-1.5 rounded-xl bg-[#0F1115] border border-[#262930] w-max max-w-full overflow-x-auto">
+        <button
+          type="button"
+          onClick={() => setActiveSubMode('GERAR')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
+            activeSubMode === 'GERAR'
+              ? 'bg-[#17191D] text-white border border-[#363B47] shadow-sm'
+              : 'text-zinc-400 hover:text-white'
+          }`}
+        >
+          <FileCheck2 className={`w-4 h-4 ${activeSubMode === 'GERAR' ? 'text-[#F57917]' : 'text-zinc-500'}`} />
+          <span>Gerar Manifesto</span>
+        </button>
 
-        {/* Sub-mode switcher */}
-        <div className="flex items-center gap-1.5 p-1 bg-[#17191D] rounded-xl border border-[#262930] shrink-0">
-          <button
-            type="button"
-            onClick={() => setActiveSubMode('GERAR')}
-            className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
-              activeSubMode === 'GERAR'
-                ? 'bg-[#F57917] text-zinc-950 font-bold shadow-sm'
-                : 'text-zinc-400 hover:text-white'
-            }`}
-          >
-            1. Gerar Novo Manifesto
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveSubMode('VALIDAR')}
-            className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
-              activeSubMode === 'VALIDAR'
-                ? 'bg-[#F57917] text-zinc-950 font-bold shadow-sm'
-                : 'text-zinc-400 hover:text-white'
-            }`}
-          >
-            2. Validar Manifesto Existente
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => setActiveSubMode('VALIDAR')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
+            activeSubMode === 'VALIDAR'
+              ? 'bg-[#17191D] text-white border border-[#363B47] shadow-sm'
+              : 'text-zinc-400 hover:text-white'
+          }`}
+        >
+          <ShieldCheck className={`w-4 h-4 ${activeSubMode === 'VALIDAR' ? 'text-[#F57917]' : 'text-zinc-500'}`} />
+          <span>Validar Manifesto</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSubMode('LOTE')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
+            activeSubMode === 'LOTE'
+              ? 'bg-[#17191D] text-white border border-[#363B47] shadow-sm'
+              : 'text-zinc-400 hover:text-white'
+          }`}
+        >
+          <Layers className={`w-4 h-4 ${activeSubMode === 'LOTE' ? 'text-[#F57917]' : 'text-zinc-500'}`} />
+          <span>Validação em Lote</span>
+        </button>
       </div>
 
-      {/* Global Status Banner */}
-      {(genStatusMessage || valStatusMessage) && (
-        <div className="p-3.5 rounded-xl bg-[#17191D] border border-[#262930] text-xs text-zinc-300 flex items-center gap-2">
-          <HelpCircle className="w-4 h-4 text-[#F57917] shrink-0" />
-          <span>{activeSubMode === 'GERAR' ? genStatusMessage : valStatusMessage}</span>
-        </div>
-      )}
+      {activeSubMode === 'LOTE' ? (
+        <BatchValidationModule onAddSessionRecord={onAddSessionRecord} />
+      ) : (
+        <>
+          {/* Module Header */}
+          <div className="border-b border-[#262930] pb-4">
+            <h1 className="text-xl font-bold text-white flex items-center gap-2.5 font-mono">
+              <FileCheck2 className="w-6 h-6 text-[#F57917]" />
+              MANIFESTO DE INTEGRIDADE DA EXTRAÇÃO
+            </h1>
+            <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+              Gere manifestos ou valide a integridade contra manifestos existentes (incluindo o formato de checksums do <strong>ExactFile</strong>, GNU coreutils sha256sum e CSVs periciais).
+            </p>
+          </div>
+
+          {/* Global Status Banner */}
+          {(genStatusMessage || valStatusMessage) && (
+            <div className="p-3.5 rounded-xl bg-[#17191D] border border-[#262930] text-xs text-zinc-300 flex items-center gap-2">
+              <HelpCircle className="w-4 h-4 text-[#F57917] shrink-0" />
+              <span>{activeSubMode === 'GERAR' ? genStatusMessage : valStatusMessage}</span>
+            </div>
+          )}
 
       {/* ===================================================================== */}
       {/* SUB-MODE 1: GERAR NOVO MANIFESTO                                      */}
@@ -1610,6 +1644,8 @@ export const ExtractionManifestModule: React.FC<ExtractionManifestModuleProps> =
             </div>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );

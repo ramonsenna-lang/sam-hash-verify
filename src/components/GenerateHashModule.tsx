@@ -11,8 +11,10 @@ import {
   AlertCircle,
   Trash2,
   RefreshCw,
+  FolderTree,
 } from 'lucide-react';
 import { HashAlgorithm, SingleValidationRecord } from '../types';
+import { FolderHashModule } from './FolderHashModule';
 import {
   computeHashes,
   formatBytes,
@@ -28,6 +30,7 @@ import {
 
 interface GenerateHashModuleProps {
   onAddSessionRecord: (record: SingleValidationRecord) => void;
+  initialSubTab?: 'arquivos' | 'pastas';
 }
 
 interface CalculatedFileResult {
@@ -42,7 +45,16 @@ interface CalculatedFileResult {
 
 export const GenerateHashModule: React.FC<GenerateHashModuleProps> = ({
   onAddSessionRecord,
+  initialSubTab = 'arquivos',
 }) => {
+  const [activeSubTab, setActiveSubTab] = useState<'arquivos' | 'pastas'>(initialSubTab);
+
+  React.useEffect(() => {
+    if (initialSubTab) {
+      setActiveSubTab(initialSubTab);
+    }
+  }, [initialSubTab]);
+
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [activeFileIndex, setActiveFileIndex] = useState<number>(0);
   const [selectedAlgorithms, setSelectedAlgorithms] = useState<HashAlgorithm[]>(['SHA-256']);
@@ -268,7 +280,40 @@ export const GenerateHashModule: React.FC<GenerateHashModuleProps> = ({
         </p>
       </div>
 
-      {/* Algorithm Selector bar */}
+      {/* Sub-tab Switcher: Arquivos vs Pastas */}
+      <div className="flex items-center gap-2 p-1.5 rounded-xl bg-[#0F1115] border border-[#262930] w-max">
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('arquivos')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+            activeSubTab === 'arquivos'
+              ? 'bg-[#17191D] text-white border border-[#363B47] shadow-sm'
+              : 'text-zinc-400 hover:text-white'
+          }`}
+        >
+          <Fingerprint className={`w-4 h-4 ${activeSubTab === 'arquivos' ? 'text-[#F57917]' : 'text-zinc-500'}`} />
+          <span>Hash de Arquivos</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('pastas')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+            activeSubTab === 'pastas'
+              ? 'bg-[#17191D] text-white border border-[#363B47] shadow-sm'
+              : 'text-zinc-400 hover:text-white'
+          }`}
+        >
+          <FolderTree className={`w-4 h-4 ${activeSubTab === 'pastas' ? 'text-[#F57917]' : 'text-zinc-500'}`} />
+          <span>Hash de Pastas e Subpastas</span>
+        </button>
+      </div>
+
+      {activeSubTab === 'pastas' ? (
+        <FolderHashModule onAddSessionRecord={onAddSessionRecord} />
+      ) : (
+        <>
+          {/* Algorithm Selector bar */}
       <div className="p-4 rounded-xl bg-[#0F1115] border border-[#262930] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <span className="text-xs font-mono font-semibold uppercase text-zinc-300 block">
@@ -538,6 +583,8 @@ export const GenerateHashModule: React.FC<GenerateHashModuleProps> = ({
             })}
           </div>
         </div>
+          )}
+        </>
       )}
     </div>
   );

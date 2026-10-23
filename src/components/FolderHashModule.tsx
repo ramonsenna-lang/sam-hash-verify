@@ -51,10 +51,12 @@ import {
 
 interface FolderHashModuleProps {
   onAddSessionRecord?: (record: SingleValidationRecord) => void;
+  hideHeaderCard?: boolean;
 }
 
 export const FolderHashModule: React.FC<FolderHashModuleProps> = ({
   onAddSessionRecord,
+  hideHeaderCard = false,
 }) => {
   // Directory & Items state
   const [folderName, setFolderName] = useState<string>('');
@@ -649,37 +651,39 @@ export const FolderHashModule: React.FC<FolderHashModuleProps> = ({
 
       {/* Top Header Card */}
       <div className="rounded-2xl bg-[#0F1115] border border-[#262930] p-6 shadow-xl">
-        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-          <div className="flex items-center gap-3.5">
-            <div className="w-12 h-12 rounded-xl bg-[#17191D] border border-[#262930] flex items-center justify-center text-[#F57917] shadow-inner">
-              <FolderTree className="w-6 h-6" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-xl font-bold tracking-tight text-white font-mono">
-                  HASH DE PASTAS E SUBPASTAS
-                </h1>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono uppercase bg-[#F57917]/10 text-[#F57917] border border-[#F57917]/20">
-                  Recursivo
-                </span>
+        {!hideHeaderCard && (
+          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="flex items-center gap-3.5">
+              <div className="w-12 h-12 rounded-xl bg-[#17191D] border border-[#262930] flex items-center justify-center text-[#F57917] shadow-inner">
+                <FolderTree className="w-6 h-6" />
               </div>
-              <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
-                Selecione uma pasta para calcular o hash de todos os arquivos contidos nela e em suas subpastas.
-                Os arquivos serão processados localmente, sem envio para servidores externos.
-              </p>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h1 className="text-xl font-bold tracking-tight text-white font-mono">
+                    HASH DE PASTAS E SUBPASTAS
+                  </h1>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-mono uppercase bg-[#F57917]/10 text-[#F57917] border border-[#F57917]/20">
+                    Recursivo
+                  </span>
+                </div>
+                <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+                  Selecione uma pasta para calcular o hash de todos os arquivos contidos nela e em suas subpastas.
+                  Os arquivos serão processados localmente, sem envio para servidores externos.
+                </p>
+              </div>
+            </div>
+
+            {/* Privacy Badge */}
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#17191D] border border-emerald-950/60 text-emerald-400 text-xs font-medium shrink-0">
+              <ShieldCheck className="w-4 h-4 text-emerald-500" />
+              <span>Processamento 100% Local</span>
             </div>
           </div>
-
-          {/* Privacy Badge */}
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#17191D] border border-emerald-950/60 text-emerald-400 text-xs font-medium shrink-0">
-            <ShieldCheck className="w-4 h-4 text-emerald-500" />
-            <span>Processamento 100% Local</span>
-          </div>
-        </div>
+        )}
 
         {/* Directory Selection Button Box */}
         {items.length === 0 ? (
-          <div className="mt-6 border-2 border-dashed border-[#262930] hover:border-[#F57917]/60 rounded-2xl p-8 sm:p-12 text-center transition-colors bg-[#131519]/50">
+          <div className={`${!hideHeaderCard ? 'mt-6' : ''} border-2 border-dashed border-[#262930] hover:border-[#F57917]/60 rounded-2xl p-8 sm:p-12 text-center transition-colors bg-[#131519]/50`}>
             <div className="max-w-md mx-auto flex flex-col items-center">
               <div className="w-16 h-16 rounded-2xl bg-[#17191D] border border-[#262930] flex items-center justify-center text-[#F57917] mb-4 shadow-lg">
                 <FolderOpen className="w-8 h-8" />

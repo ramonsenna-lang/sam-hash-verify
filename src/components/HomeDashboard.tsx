@@ -146,7 +146,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
               Validação em Lote
             </h3>
             <p className="text-xs text-zinc-400 mt-1">
-              Múltiplas evidências & importação de manifestos
+              Múltiplas evidências & importação de manifestos. Agora incorporado no menu Manifesto.
             </p>
             <div className="mt-4 flex items-center gap-1.5 text-xs text-[#F57917] opacity-0 group-hover:opacity-100 transition-opacity">
               <span>Processar lote</span>
@@ -187,7 +187,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
           {/* Hash de Pastas */}
           <div
-            onClick={() => onNavigate('pastas')}
+            onClick={() => onNavigate('gerar')}
             className="p-5 rounded-xl bg-[#131519] border border-[#262930] hover:border-[#F57917]/60 hover:bg-[#171A20] transition-all cursor-pointer flex flex-col justify-between"
           >
             <div>
@@ -198,11 +198,11 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
                 <h4 className="font-bold text-sm text-white">Hash de Pastas</h4>
               </div>
               <p className="text-xs text-zinc-400 leading-relaxed">
-                Varredura recursiva de diretórios e subpastas. Cálculo de hashes, catálogo e exportação de manifestos e laudo em PDF.
+                Varredura recursiva de diretórios e subpastas. Agora incorporado no menu Gerar Hash.
               </p>
             </div>
             <span className="mt-4 text-xs text-[#F57917] font-medium flex items-center gap-1">
-              Processar pasta <ArrowRight className="w-3 h-3" />
+              Gerar em pastas <ArrowRight className="w-3 h-3" />
             </span>
           </div>
 
@@ -261,8 +261,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
                 <h4 className="font-bold text-sm text-white">Extrações Forenses</h4>
               </div>
               <p className="text-xs text-zinc-400 leading-relaxed">
-                Suporte para arquivos UFED (.ufdr, .ufd), Physical Analyzer, imagens (.bin, .e01, .raw) e nuvem,
-                com formulário pericial de cadeia de custódia.
+                Suporte para arquivos UFED (.ufdr, .ufd), Physical Analyzer, imagens (.bin, .e01, .raw) e nuvem. Agora incorporado no menu Validar Hash.
               </p>
             </div>
             <span className="mt-4 text-xs text-[#F57917] font-medium flex items-center gap-1">

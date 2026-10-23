@@ -12,6 +12,7 @@ import {
   HelpCircle,
   RefreshCw,
   GitCompare,
+  HardDrive,
 } from 'lucide-react';
 import { HashAlgorithm, ValidationStatus, SingleValidationRecord } from '../types';
 import {
@@ -23,14 +24,25 @@ import {
 } from '../utils/crypto';
 import { exportSingleRecordPDF, exportSingleRecordTXT, formatForensicDate } from '../utils/exporter';
 import { CompareTwoHashesTab } from './CompareTwoHashesTab';
+import { ForensicExtractionModule } from './ForensicExtractionModule';
 
 interface ValidateHashModuleProps {
   onAddSessionRecord: (record: SingleValidationRecord) => void;
+  initialSubTab?: 'validacao' | 'extracao';
 }
 
 export const ValidateHashModule: React.FC<ValidateHashModuleProps> = ({
   onAddSessionRecord,
+  initialSubTab = 'validacao',
 }) => {
+  const [activeMainSubTab, setActiveMainSubTab] = useState<'validacao' | 'extracao'>(initialSubTab);
+
+  useEffect(() => {
+    if (initialSubTab) {
+      setActiveMainSubTab(initialSubTab);
+    }
+  }, [initialSubTab]);
+
   const [activeValidationSubTab, setActiveValidationSubTab] = useState<'ARQUIVO' | 'DOIS_HASHES'>('ARQUIVO');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [referenceHashInput, setReferenceHashInput] = useState('');
@@ -219,7 +231,40 @@ export const ValidateHashModule: React.FC<ValidateHashModuleProps> = ({
 
   return (
     <div className="w-full max-w-5xl mx-auto space-y-6">
-      {/* Header section with Sub-Tabs */}
+      {/* Sub-tab Switcher: Validação de Hash vs Extrações Forenses */}
+      <div className="flex items-center gap-2 p-1.5 rounded-xl bg-[#0F1115] border border-[#262930] w-max max-w-full overflow-x-auto">
+        <button
+          type="button"
+          onClick={() => setActiveMainSubTab('validacao')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
+            activeMainSubTab === 'validacao'
+              ? 'bg-[#17191D] text-white border border-[#363B47] shadow-sm'
+              : 'text-zinc-400 hover:text-white'
+          }`}
+        >
+          <ShieldCheck className={`w-4 h-4 ${activeMainSubTab === 'validacao' ? 'text-[#F57917]' : 'text-zinc-500'}`} />
+          <span>Validação de Hash</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveMainSubTab('extracao')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
+            activeMainSubTab === 'extracao'
+              ? 'bg-[#17191D] text-white border border-[#363B47] shadow-sm'
+              : 'text-zinc-400 hover:text-white'
+          }`}
+        >
+          <HardDrive className={`w-4 h-4 ${activeMainSubTab === 'extracao' ? 'text-[#F57917]' : 'text-zinc-500'}`} />
+          <span>Extrações Forenses</span>
+        </button>
+      </div>
+
+      {activeMainSubTab === 'extracao' ? (
+        <ForensicExtractionModule onAddSessionRecord={onAddSessionRecord} />
+      ) : (
+        <>
+          {/* Header section with Sub-Tabs */}
       <div className="border-b border-[#262930] pb-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-white flex items-center gap-2.5">
@@ -594,6 +639,8 @@ export const ValidateHashModule: React.FC<ValidateHashModuleProps> = ({
           </div>
         </div>
       </div>
+      )}
+        </>
       )}
     </div>
   );

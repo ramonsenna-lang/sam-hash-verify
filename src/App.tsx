@@ -74,32 +74,29 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'validar' && (
-          <ValidateHashModule onAddSessionRecord={handleAddSessionRecord} />
-        )}
+        {activeTab === 'validar' || activeTab === 'extracao' ? (
+          <ValidateHashModule
+            initialSubTab={activeTab === 'extracao' ? 'extracao' : 'validacao'}
+            onAddSessionRecord={handleAddSessionRecord}
+          />
+        ) : null}
 
-        {activeTab === 'gerar' && (
-          <GenerateHashModule onAddSessionRecord={handleAddSessionRecord} />
-        )}
+        {activeTab === 'gerar' || activeTab === 'pastas' ? (
+          <GenerateHashModule
+            initialSubTab={activeTab === 'pastas' ? 'pastas' : 'arquivos'}
+            onAddSessionRecord={handleAddSessionRecord}
+          />
+        ) : null}
 
-        {activeTab === 'pastas' && (
-          <FolderHashModule onAddSessionRecord={handleAddSessionRecord} />
-        )}
-
-        {activeTab === 'lote' && (
-          <BatchValidationModule onAddSessionRecord={handleAddSessionRecord} />
-        )}
-
-        {activeTab === 'manifesto' && (
-          <ExtractionManifestModule onAddSessionRecord={handleAddSessionRecord} />
-        )}
+        {activeTab === 'manifesto' || activeTab === 'lote' ? (
+          <ExtractionManifestModule
+            initialSubTab={activeTab === 'lote' ? 'lote' : 'gerar'}
+            onAddSessionRecord={handleAddSessionRecord}
+          />
+        ) : null}
 
         {activeTab === 'nuvens' && (
           <CloudValidationModule onAddSessionRecord={handleAddSessionRecord} />
-        )}
-
-        {activeTab === 'extracao' && (
-          <ForensicExtractionModule onAddSessionRecord={handleAddSessionRecord} />
         )}
 
         {activeTab === 'comparar' && (

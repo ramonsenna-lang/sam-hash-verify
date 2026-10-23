@@ -41,11 +41,8 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
     { id: 'inicio', label: 'Início', icon: Home },
     { id: 'validar', label: 'Validar Hash', icon: ShieldCheck },
     { id: 'gerar', label: 'Gerar Hash', icon: Fingerprint },
-    { id: 'pastas', label: 'Hash de Pastas', icon: FolderTree },
-    { id: 'lote', label: 'Lote', icon: Layers },
     { id: 'manifesto', label: 'Manifesto', icon: FileCheck2 },
     { id: 'nuvens', label: 'Validação Nuvens', icon: Cloud },
-    { id: 'extracao', label: 'Extrações Forenses', icon: HardDrive },
     { id: 'comparar', label: 'Comparar', icon: GitCompare },
     { id: 'relatorios', label: 'Relatórios', icon: FileText, badge: sessionRecordCount > 0 ? sessionRecordCount : undefined },
     { id: 'configuracoes', label: 'Configurações', icon: Settings },
@@ -73,7 +70,11 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
           <nav className="hidden xl:flex items-center gap-1">
             {navItems.map((item) => {
               const Icon = item.icon;
-              const isActive = activeTab === item.id;
+              const isActive =
+                activeTab === item.id ||
+                (item.id === 'validar' && activeTab === 'extracao') ||
+                (item.id === 'gerar' && activeTab === 'pastas') ||
+                (item.id === 'manifesto' && activeTab === 'lote');
               return (
                 <button
                   key={item.id}
@@ -132,7 +133,11 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
         <div className="xl:hidden border-t border-[#262930] bg-[#0F1115] px-4 py-3 space-y-1 animate-fade-in shadow-2xl">
           {navItems.map((item) => {
             const Icon = item.icon;
-            const isActive = activeTab === item.id;
+            const isActive =
+              activeTab === item.id ||
+              (item.id === 'validar' && activeTab === 'extracao') ||
+              (item.id === 'gerar' && activeTab === 'pastas') ||
+              (item.id === 'manifesto' && activeTab === 'lote');
             return (
               <button
                 key={item.id}
