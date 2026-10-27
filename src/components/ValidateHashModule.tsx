@@ -5,7 +5,9 @@ import {
   AlertTriangle,
   Upload,
   Copy,
+  RotateCcw,
   Check,
+  Trash2,
   FileText,
   XCircle,
   File as FileIcon,
@@ -100,6 +102,28 @@ export const ValidateHashModule: React.FC<ValidateHashModuleProps> = ({
       setCurrentResult(null);
       setErrorMessage(null);
     }
+  };
+
+  const handleClearSelection = () => {
+    if (isProcessing) {
+      const confirmCancel = window.confirm(
+        'Existe um processamento em andamento. Deseja cancelar a operação e limpar os dados temporários?'
+      );
+      if (!confirmCancel) return;
+      if (abortControllerRef.current) abortControllerRef.current.abort();
+      setIsProcessing(false);
+    }
+    setSelectedFile(null);
+    setReferenceHashInput('');
+    setCurrentResult(null);
+    setErrorMessage(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleClearResults = () => {
+    setCurrentResult(null);
   };
 
   const handleCancel = () => {
@@ -315,9 +339,22 @@ export const ValidateHashModule: React.FC<ValidateHashModuleProps> = ({
         <div className="lg:col-span-7 space-y-5">
           {/* File Selection Dropzone */}
           <div className="space-y-2">
-            <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider font-mono">
-              1. Selecionar Arquivo da Evidência
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider font-mono">
+                1. Selecionar Arquivo da Evidência
+              </label>
+              {(selectedFile || referenceHashInput) && (
+                <button
+                  type="button"
+                  onClick={handleClearSelection}
+                  className="px-2.5 py-1 rounded-lg bg-[#17191D] hover:bg-[#20242C] border border-[#262930] text-zinc-400 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                  title="Limpar seleção de arquivo e hash de referência"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>LIMPAR SELEÇÃO</span>
+                </button>
+              )}
+            </div>
             <div
               onDragOver={(e) => e.preventDefault()}
               onDrop={handleDrop}
@@ -491,11 +528,24 @@ export const ValidateHashModule: React.FC<ValidateHashModuleProps> = ({
                 <span className="text-xs font-mono font-semibold uppercase text-zinc-400">
                   Resultado da Conferência
                 </span>
-                {currentResult && (
-                  <span className="text-[11px] font-mono text-zinc-500">
-                    {currentResult.recordId}
-                  </span>
-                )}
+                <div className="flex items-center gap-2">
+                  {currentResult && (
+                    <button
+                      type="button"
+                      onClick={handleClearResults}
+                      className="px-2 py-0.5 rounded bg-[#17191D] hover:bg-[#20242C] border border-[#262930] text-zinc-400 hover:text-red-400 text-[11px] font-medium flex items-center gap-1 transition-colors cursor-pointer"
+                      title="Limpar resultado da conferência"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span>LIMPAR RESULTADOS</span>
+                    </button>
+                  )}
+                  {currentResult && (
+                    <span className="text-[11px] font-mono text-zinc-500">
+                      {currentResult.recordId}
+                    </span>
+                  )}
+                </div>
               </div>
 
               {currentResult ? (

@@ -250,30 +250,6 @@ export const CloudValidationModule: React.FC<CloudValidationModuleProps> = ({
     }
   };
 
-  const handleLoadSampleGooglePdf = async () => {
-    setIsParsingGooglePdf(true);
-    setStatusMessage(null);
-    try {
-      const response = await fetch('/assets/aistudio/Valores_de_Hash_152344365__1__c1941beb.pdf');
-      if (!response.ok) throw new Error('Não foi possível carregar o arquivo de exemplo do Google.');
-      const blob = await response.blob();
-      const sampleFile = new File([blob], 'Valores de Hash 152344365 (1).pdf', {
-        type: 'application/pdf',
-      });
-      await handleGooglePdfUpload([sampleFile]);
-    } catch (err) {
-      console.error(err);
-      setStatusMessage({
-        type: 'error',
-        text: 'Não foi possível carregar o PDF de amostra oficial.',
-      });
-      setIsParsingGooglePdf(false);
-    }
-  };
-
-  // ---------------------------------------------------------------------------
-  // APPLE HANDLERS
-  // ---------------------------------------------------------------------------
   const handleAppleCsvUpload = async (file: File) => {
     setIsParsingAppleCsv(true);
     setStatusMessage(null);
@@ -305,68 +281,103 @@ export const CloudValidationModule: React.FC<CloudValidationModuleProps> = ({
     }
   };
 
-  const handleLoadSampleAppleCsv = async () => {
-    setIsParsingAppleCsv(true);
-    setStatusMessage(null);
-    try {
-      const response = await fetch('/assets/aistudio/arquivoenviadopelaApple_78b47c64.csv');
-      if (!response.ok) throw new Error('Não foi possível carregar o CSV de exemplo da Apple.');
-      const blob = await response.blob();
-      const sampleFile = new File([blob], '2228147_20261023150000-account-download-details.csv', {
-        type: 'text/csv',
-      });
-      await handleAppleCsvUpload(sampleFile);
-    } catch (err) {
-      console.error(err);
-      setStatusMessage({
-        type: 'error',
-        text: 'Não foi possível carregar o manifesto CSV de amostra oficial.',
-      });
-      setIsParsingAppleCsv(false);
-    }
-  };
-
   // ---------------------------------------------------------------------------
   // CLEAR HANDLERS
   // ---------------------------------------------------------------------------
-  const handleClearSelection = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
+  const resetInputById = (id: string) => {
+    const el = document.getElementById(id) as HTMLInputElement | null;
+    if (el) el.value = '';
+  };
+
+  const handleClearDocument = () => {
+    if (isProcessing) {
+      const confirmCancel = window.confirm(
+        'Existe um processamento em andamento. Deseja cancelar a operação e limpar os dados temporários?'
+      );
+      if (!confirmCancel) return;
+      if (abortControllerRef.current) abortControllerRef.current.abort();
+      opSeqRef.current++;
+      setIsProcessing(false);
+      setProgressPercent(0);
     }
-    opSeqRef.current++;
-    setIsProcessing(false);
-    setProgressPercent(0);
+
+    if (selectedProvider === 'GOOGLE') {
+      setGooglePdfs([]);
+      setGoogleMergedItems([]);
+      setGoogleMergeResult(null);
+      resetInputById(googlePdfInputId);
+    } else {
+      setAppleCsvFile(null);
+      setAppleCsvSha256('');
+      setAppleItems([]);
+      resetInputById(appleCsvInputId);
+    }
+    setManualAssociations({});
+    setValidationSession(null);
+    setStatusMessage({
+      type: 'info',
+      text: 'Documento oficial removido. Os arquivos entregues continuam na memória.',
+    });
+  };
+
+  const handleClearDeliveredFiles = () => {
+    if (isProcessing) {
+      const confirmCancel = window.confirm(
+        'Existe um processamento em andamento. Deseja cancelar a operação e limpar os dados temporários?'
+      );
+      if (!confirmCancel) return;
+      if (abortControllerRef.current) abortControllerRef.current.abort();
+      opSeqRef.current++;
+      setIsProcessing(false);
+      setProgressPercent(0);
+    }
 
     if (selectedProvider === 'GOOGLE') {
       setGoogleDeliveredFiles([]);
+      resetInputById(googleFolderInputId);
+      resetInputById(googleFilesInputId);
     } else {
       setAppleDeliveredFiles([]);
+      resetInputById(appleFolderInputId);
+      resetInputById(appleFilesInputId);
     }
     setValidationSession(null);
     setStatusMessage({
       type: 'info',
-      text: 'Seleção de arquivos limpa. O manifesto carregado foi preservado.',
+      text: 'Seleção de arquivos limpa da memória. O documento oficial foi preservado.',
     });
   };
 
+  const handleClearSelection = handleClearDeliveredFiles;
+
   const handleClearAll = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
+    if (isProcessing) {
+      const confirmCancel = window.confirm(
+        'Existe um processamento em andamento. Deseja cancelar a operação e limpar os dados temporários?'
+      );
+      if (!confirmCancel) return;
+      if (abortControllerRef.current) abortControllerRef.current.abort();
+      opSeqRef.current++;
+      setIsProcessing(false);
+      setProgressPercent(0);
     }
-    opSeqRef.current++;
-    setIsProcessing(false);
-    setProgressPercent(0);
 
     if (selectedProvider === 'GOOGLE') {
       setGooglePdfs([]);
       setGoogleMergedItems([]);
       setGoogleDeliveredFiles([]);
       setGoogleMergeResult(null);
+      resetInputById(googlePdfInputId);
+      resetInputById(googleFolderInputId);
+      resetInputById(googleFilesInputId);
     } else {
       setAppleCsvFile(null);
       setAppleCsvSha256('');
       setAppleItems([]);
       setAppleDeliveredFiles([]);
+      resetInputById(appleCsvInputId);
+      resetInputById(appleFolderInputId);
+      resetInputById(appleFilesInputId);
     }
 
     setManualAssociations({});
@@ -1705,16 +1716,18 @@ export const CloudValidationModule: React.FC<CloudValidationModuleProps> = ({
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={handleLoadSampleGooglePdf}
-                      disabled={isParsingGooglePdf || isProcessing}
-                      className="px-3 py-1.5 rounded-lg bg-[#1A1D24] hover:bg-[#262930] border border-[#363B47] text-xs text-[#4285F4] font-medium transition-colors cursor-pointer disabled:opacity-50"
-                      title="Carrega o PDF oficial 152344365 recebido pelo tribunal"
-                    >
-                      Carregar Amostra Real Oficial (PDF Google)
-                    </button>
-
+                    {googlePdfs.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleClearDocument}
+                        disabled={isProcessing}
+                        className="px-3 py-1.5 rounded-lg bg-[#1A1D24] hover:bg-[#262930] border border-[#262930] text-zinc-400 hover:text-white text-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                        title="Limpar documento PDF carregado e registros declarados"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Limpar Documento</span>
+                      </button>
+                    )}
                     <label
                       htmlFor={googlePdfInputId}
                       className="px-3.5 py-1.5 rounded-lg bg-[#4285F4] hover:bg-[#3367D6] text-white text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
@@ -1954,12 +1967,13 @@ export const CloudValidationModule: React.FC<CloudValidationModuleProps> = ({
                     {googleDeliveredFiles.length > 0 && (
                       <button
                         type="button"
-                        onClick={handleClearSelection}
+                        onClick={handleClearDeliveredFiles}
                         disabled={isProcessing}
                         className="px-3 py-1.5 rounded-lg bg-[#1A1D24] hover:bg-[#262930] border border-[#262930] text-zinc-400 hover:text-white text-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                        title="Limpar arquivos entregues selecionados"
                       >
                         <RotateCcw className="w-3.5 h-3.5" />
-                        <span>Limpar Seleção</span>
+                        <span>Limpar Arquivos</span>
                       </button>
                     )}
 
@@ -2122,16 +2136,18 @@ export const CloudValidationModule: React.FC<CloudValidationModuleProps> = ({
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={handleLoadSampleAppleCsv}
-                      disabled={isParsingAppleCsv || isProcessing}
-                      className="px-3 py-1.5 rounded-lg bg-[#1A1D24] hover:bg-[#262930] border border-[#363B47] text-xs text-zinc-200 font-medium transition-colors cursor-pointer disabled:opacity-50"
-                      title="Carrega o arquivo CSV oficial enviado pela Apple para perícia"
-                    >
-                      Carregar Amostra Real Oficial (CSV Apple)
-                    </button>
-
+                    {appleCsvFile && (
+                      <button
+                        type="button"
+                        onClick={handleClearDocument}
+                        disabled={isProcessing}
+                        className="px-3 py-1.5 rounded-lg bg-[#1A1D24] hover:bg-[#262930] border border-[#262930] text-zinc-400 hover:text-white text-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                        title="Limpar manifesto CSV carregado e registros declarados"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Limpar Documento</span>
+                      </button>
+                    )}
                     <label
                       htmlFor={appleCsvInputId}
                       className="px-3.5 py-1.5 rounded-lg bg-zinc-100 hover:bg-white text-zinc-950 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
@@ -2291,12 +2307,13 @@ export const CloudValidationModule: React.FC<CloudValidationModuleProps> = ({
                     {appleDeliveredFiles.length > 0 && (
                       <button
                         type="button"
-                        onClick={handleClearSelection}
+                        onClick={handleClearDeliveredFiles}
                         disabled={isProcessing}
                         className="px-3 py-1.5 rounded-lg bg-[#1A1D24] hover:bg-[#262930] border border-[#262930] text-zinc-400 hover:text-white text-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                        title="Limpar arquivos entregues selecionados"
                       >
                         <RotateCcw className="w-3.5 h-3.5" />
-                        <span>Limpar Seleção</span>
+                        <span>Limpar Arquivos</span>
                       </button>
                     )}
 

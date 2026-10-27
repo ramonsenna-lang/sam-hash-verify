@@ -8,6 +8,7 @@ import {
   Pause,
   Square,
   RotateCcw,
+  Trash2,
   FileText,
   Download,
   CheckCircle2,
@@ -484,8 +485,12 @@ export const FolderHashModule: React.FC<FolderHashModuleProps> = ({
   };
 
   // Reset / Clear
-  const handleReset = () => {
+  const handleClearSelection = () => {
     if (isRunning) {
+      const confirmCancel = window.confirm(
+        'Existe um processamento em andamento. Deseja cancelar a operação e limpar os dados temporários?'
+      );
+      if (!confirmCancel) return;
       handleCancel();
     }
     setItems([]);
@@ -502,7 +507,40 @@ export const FolderHashModule: React.FC<FolderHashModuleProps> = ({
     setElapsedSeconds(0);
     setBytesPerSecond(0);
     setSessionAddedNotice(false);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
+
+  const handleClearResults = () => {
+    if (isRunning) {
+      const confirmCancel = window.confirm(
+        'Existe um processamento em andamento. Deseja cancelar a operação e limpar os dados temporários?'
+      );
+      if (!confirmCancel) return;
+      handleCancel();
+    }
+    setItems((prev) =>
+      prev.map((it) => ({
+        ...it,
+        calculatedHashes: {},
+        timeTakenMs: undefined,
+        status: 'PENDENTE',
+        errorMessage: undefined,
+      }))
+    );
+    setIsRunning(false);
+    setIsPaused(false);
+    setIsFinished(false);
+    setCurrentIndex(-1);
+    setCurrentFileProgress(0);
+    setProcessedBytes(0);
+    setElapsedSeconds(0);
+    setBytesPerSecond(0);
+    setSessionAddedNotice(false);
+  };
+
+  const handleReset = handleClearSelection;
 
   // Copy hash helper
   const handleCopyHash = (text: string, id: string) => {
@@ -780,14 +818,27 @@ export const FolderHashModule: React.FC<FolderHashModuleProps> = ({
                   <span>{showMetadataForm ? 'Ocultar Metadados' : 'Dados do Laudo'}</span>
                 </button>
 
+                {items.some((it) => it.status === 'CALCULADO') && (
+                  <button
+                    type="button"
+                    onClick={handleClearResults}
+                    className="px-3 py-1.5 rounded-lg bg-[#1A1D24] hover:bg-[#262930] border border-[#262930] text-zinc-300 hover:text-red-400 text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer"
+                    title="Limpar hashes calculados preservando os arquivos da pasta"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>LIMPAR RESULTADOS</span>
+                  </button>
+                )}
+
                 <button
                   type="button"
-                  onClick={handleReset}
+                  onClick={handleClearSelection}
                   disabled={isRunning && !isPaused}
                   className="px-3 py-1.5 rounded-lg bg-red-950/30 hover:bg-red-900/40 border border-red-900/40 text-red-300 text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
+                  title="Limpar pasta selecionada e todos os dados temporários"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Limpar</span>
+                  <span>LIMPAR SELEÇÃO</span>
                 </button>
               </div>
             </div>

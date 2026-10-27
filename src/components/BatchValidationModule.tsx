@@ -12,6 +12,8 @@ import {
   Filter,
   RefreshCw,
   Search,
+  RotateCcw,
+  Trash2,
 } from 'lucide-react';
 import { BatchItem, HashAlgorithm, ValidationStatus, SingleValidationRecord } from '../types';
 import {
@@ -157,6 +159,48 @@ export const BatchValidationModule: React.FC<BatchValidationModuleProps> = ({
       };
       reader.readAsText(file);
     }
+  };
+
+  const handleClearSelection = () => {
+    if (isProcessing) {
+      const confirmCancel = window.confirm(
+        'Existe um processamento em andamento. Deseja cancelar a operação e limpar os dados temporários?'
+      );
+      if (!confirmCancel) return;
+      abortControllerRef.current?.abort();
+      setIsProcessing(false);
+    }
+    setBatchItems((prev) =>
+      prev.map((it) => ({
+        ...it,
+        file: undefined,
+        calculatedHash: undefined,
+        status: it.expectedHash ? 'NAO_LOCALIZADO' : 'PENDENTE',
+        progress: 0,
+        timeTakenMs: undefined,
+        errorMessage: undefined,
+      }))
+    );
+    setStatusMessage('Arquivos da seleção limpos. Os registros do manifesto foram mantidos.');
+    if (filesInputRef.current) filesInputRef.current.value = '';
+    if (folderInputRef.current) folderInputRef.current.value = '';
+  };
+
+  const handleClearAll = () => {
+    if (isProcessing) {
+      const confirmCancel = window.confirm(
+        'Existe um processamento em andamento. Deseja cancelar a operação e limpar os dados temporários?'
+      );
+      if (!confirmCancel) return;
+      abortControllerRef.current?.abort();
+      setIsProcessing(false);
+    }
+    setBatchItems([]);
+    setManifestText('');
+    setStatusMessage(null);
+    if (filesInputRef.current) filesInputRef.current.value = '';
+    if (folderInputRef.current) folderInputRef.current.value = '';
+    if (manifestFileInputRef.current) manifestFileInputRef.current.value = '';
   };
 
   const handleCancel = () => {
@@ -390,13 +434,22 @@ export const BatchValidationModule: React.FC<BatchValidationModuleProps> = ({
 
             <button
               type="button"
-              onClick={() => {
-                setBatchItems([]);
-                setStatusMessage(null);
-              }}
-              className="text-xs text-zinc-500 hover:text-red-400 px-2 py-1"
+              onClick={handleClearSelection}
+              className="py-2 px-3 rounded-lg bg-[#17191D] hover:bg-[#262930] border border-[#262930] text-zinc-400 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Limpar arquivos carregados mantendo o manifesto"
             >
-              Limpar Lista
+              <RotateCcw className="w-3.5 h-3.5" />
+              Limpar Seleção
+            </button>
+
+            <button
+              type="button"
+              onClick={handleClearAll}
+              className="py-2 px-3 rounded-lg bg-red-950/30 hover:bg-red-900/40 border border-red-900/40 text-red-300 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Limpar todos os registros e arquivos do lote"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Limpar Tudo
             </button>
           </div>
         )}

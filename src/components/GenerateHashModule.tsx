@@ -12,6 +12,7 @@ import {
   Trash2,
   RefreshCw,
   FolderTree,
+  RotateCcw,
 } from 'lucide-react';
 import { HashAlgorithm, SingleValidationRecord } from '../types';
 import { FolderHashModule } from './FolderHashModule';
@@ -96,12 +97,28 @@ export const GenerateHashModule: React.FC<GenerateHashModuleProps> = ({
     }
   };
 
-  const clearAllFiles = () => {
+  const handleClearSelection = () => {
+    if (isProcessing) {
+      const confirmCancel = window.confirm(
+        'Existe um processamento em andamento. Deseja cancelar a operação e limpar os dados temporários?'
+      );
+      if (!confirmCancel) return;
+      if (abortControllerRef.current) abortControllerRef.current.abort();
+      setIsProcessing(false);
+    }
     setSelectedFiles([]);
-    setCalculatedResults([]);
     setActiveFileIndex(0);
     setErrorMessage(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
+
+  const handleClearResults = () => {
+    setCalculatedResults([]);
+  };
+
+  const clearAllFiles = handleClearSelection;
 
   const handleCancel = () => {
     if (abortControllerRef.current) {
@@ -384,11 +401,12 @@ export const GenerateHashModule: React.FC<GenerateHashModuleProps> = ({
             </span>
             <button
               type="button"
-              onClick={clearAllFiles}
-              className="text-xs text-zinc-400 hover:text-red-400 flex items-center gap-1 cursor-pointer"
+              onClick={handleClearSelection}
+              className="px-2.5 py-1 rounded-lg bg-[#17191D] hover:bg-[#20242C] border border-[#262930] text-zinc-400 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Limpar arquivos da fila de seleção"
             >
-              <Trash2 className="w-3.5 h-3.5" />
-              Limpar fila
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>LIMPAR SELEÇÃO</span>
             </button>
           </div>
 
@@ -489,8 +507,17 @@ export const GenerateHashModule: React.FC<GenerateHashModuleProps> = ({
               </span>
             </div>
 
-            {/* Export Buttons */}
+            {/* Export Buttons & Clear Results */}
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleClearResults}
+                className="py-1.5 px-3 rounded-lg bg-[#17191D] hover:bg-[#262930] border border-[#262930] text-zinc-400 hover:text-red-400 text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
+                title="Limpar hashes calculados preservando a seleção"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>LIMPAR RESULTADOS</span>
+              </button>
               <button
                 type="button"
                 onClick={exportAllAsTXT}

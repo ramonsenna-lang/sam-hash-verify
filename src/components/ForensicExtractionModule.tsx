@@ -12,6 +12,8 @@ import {
   AlertTriangle,
   RefreshCw,
   FolderArchive,
+  RotateCcw,
+  Trash2,
 } from 'lucide-react';
 import {
   HashAlgorithm,
@@ -76,6 +78,28 @@ export const ForensicExtractionModule: React.FC<ForensicExtractionModuleProps> =
     if (detection.isValidHex && detection.algorithm) {
       setAlgorithm(detection.algorithm);
     }
+  };
+
+  const handleClearSelection = () => {
+    if (isProcessing) {
+      const confirmCancel = window.confirm(
+        'Existe um processamento em andamento. Deseja cancelar a operação e limpar os dados temporários?'
+      );
+      if (!confirmCancel) return;
+      if (abortControllerRef.current) abortControllerRef.current.abort();
+      setIsProcessing(false);
+    }
+    setSelectedFile(null);
+    setReferenceHash('');
+    setValidationResult(null);
+    setErrorMessage(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleClearResults = () => {
+    setValidationResult(null);
   };
 
   const handleValidateExtraction = async () => {
@@ -221,9 +245,22 @@ export const ForensicExtractionModule: React.FC<ForensicExtractionModuleProps> =
         <div className="lg:col-span-7 space-y-5">
           {/* File input */}
           <div className="space-y-2">
-            <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider font-mono">
-              Arquivo da Imagem ou Pacote Forense
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider font-mono">
+                Arquivo da Imagem ou Pacote Forense
+              </label>
+              {(selectedFile || referenceHash) && (
+                <button
+                  type="button"
+                  onClick={handleClearSelection}
+                  className="px-2.5 py-1 rounded-lg bg-[#17191D] hover:bg-[#20242C] border border-[#262930] text-zinc-400 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                  title="Limpar seleção e dados de referência"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>LIMPAR SELEÇÃO</span>
+                </button>
+              )}
+            </div>
             <div
               onClick={() => fileInputRef.current?.click()}
               className={`p-6 rounded-xl border-2 border-dashed transition-all cursor-pointer flex flex-col items-center justify-center text-center ${
@@ -455,11 +492,24 @@ export const ForensicExtractionModule: React.FC<ForensicExtractionModuleProps> =
                 <span className="text-xs font-mono font-semibold uppercase text-zinc-400">
                   Resultado Pericial
                 </span>
-                {validationResult && (
-                  <span className="text-[11px] font-mono text-zinc-500">
-                    {validationResult.id}
-                  </span>
-                )}
+                <div className="flex items-center gap-2">
+                  {validationResult && (
+                    <button
+                      type="button"
+                      onClick={handleClearResults}
+                      className="px-2 py-0.5 rounded bg-[#17191D] hover:bg-[#20242C] border border-[#262930] text-zinc-400 hover:text-red-400 text-[11px] font-medium flex items-center gap-1 transition-colors cursor-pointer"
+                      title="Limpar resultado da conferência"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span>LIMPAR RESULTADOS</span>
+                    </button>
+                  )}
+                  {validationResult && (
+                    <span className="text-[11px] font-mono text-zinc-500">
+                      {validationResult.id}
+                    </span>
+                  )}
+                </div>
               </div>
 
               {validationResult ? (
